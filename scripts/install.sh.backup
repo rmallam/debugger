@@ -161,8 +161,6 @@ show_usage_info() {
     echo "  2. Set up monitoring: ./scripts/setup-monitoring.sh"
     echo "  3. View audit logs: ./scripts/audit-viewer.sh"
     echo ""
-}
-
 # Main function
 main() {
     case "${1:-}" in

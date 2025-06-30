@@ -1,27 +1,29 @@
 # OpenShift Network Debugger Solution
 
-A secure solution for running network debugging tools (`tcpdump` and `ncat`) on OpenShift worker nodes with controlled access, comprehensive audit logging, and privilege violation alerts.
+A secure solution for running network debugging tools (`tcpdump` and `ncat`) on OpenShift worker nodes using the Red Hat recommended approach for OpenShift 4.11+. This implementation provides controlled access, comprehensive audit logging, and follows OpenShift best practices.
 
 ## 🎯 Overview
 
-This solution enables application teams with limited OpenShift access to run specific network debugging commands on worker nodes while maintaining strict security controls. It uses OpenShift-native resources and shell scripts for easy deployment and extension.
+This solution enables application teams to run specific network debugging commands on worker nodes while maintaining strict security controls. It implements the official Red Hat solution for packet capture using `oc debug node` with proper network namespace isolation.
 
 ## ✨ Key Features
 
-- **🔒 Secure by Design**: Uses OpenShift SCC and RBAC for controlled privileged access
-- **📝 Complete Audit Trail**: Logs all command executions with user, timestamp, and node details
+- **🔒 Red Hat Recommended**: Uses the official Red Hat solution approach for OpenShift 4.11+
+- **🐳 Pod Network Isolation**: Capture traffic from specific pod network namespaces using `nsenter`
+- **📝 Complete Audit Trail**: Logs all command executions with user, timestamp, node, and pod details
 - **🚨 Real-time Alerts**: Immediate notifications for privilege violations and unauthorized access
 - **🎛️ Command Validation**: Only allows `tcpdump` and `ncat` with safety parameter enforcement
 - **🔧 Shell-based**: Easy to extend and customize using familiar bash scripts
-- **📊 Monitoring Ready**: Prometheus integration with pre-configured alerting rules
-- **🏗️ OpenShift Native**: Uses only OpenShift resources (no external dependencies)
+- **📊 Monitoring Ready**: Comprehensive audit logging and violation detection
+- **🏗️ OpenShift Native**: Uses `oc debug node` - no persistent privileged containers required
 
 ## 🚀 Quick Start
 
 ### Prerequisites
-- OpenShift cluster with admin access
-- OpenShift CLI (`oc`) installed
-- Access to the `fttc-ancillary` namespace
+- OpenShift cluster 4.11+ (baremetal implementation)
+- OpenShift CLI (`oc`) installed and logged in
+- Cluster-admin privileges for initial setup
+- Target pods and nodes must be accessible
 
 ### Installation
 ```bash
@@ -29,23 +31,27 @@ This solution enables application teams with limited OpenShift access to run spe
 git clone <repository-url>
 cd debugger
 
-# Install the solution (requires cluster-admin privileges)
-./scripts/install.sh
-
-# Setup monitoring and alerting
+# No installation required - uses oc debug node approach
+# Optionally set up monitoring
 ./scripts/setup-monitoring.sh
 
-# Test the installation
+# Test the solution
 ./scripts/test-solution.sh
 ```
 
 ### Basic Usage
 ```bash
-# Execute tcpdump on a worker node
-./scripts/execute-command.sh worker-node-1 tcpdump -i eth0 -c 100
+# Debug specific pod network namespace
+./scripts/execute-command.sh worker-node-1 my-app-pod default tcpdump -i eth0 -c 100
 
-# Test network connectivity with ncat
-./scripts/execute-command.sh worker-node-2 ncat -zv service-host 80
+# Debug another pod's network traffic
+./scripts/execute-command.sh worker-node-1 web-server default tcpdump -i eth0 port 80
+
+# Test connectivity from pod's network context
+./scripts/execute-command.sh worker-node-2 client-pod default ncat -zv service-host 80
+
+# Debug node-level network (host network namespace)
+./scripts/execute-command.sh worker-node-2 - - tcpdump -i eth0 -c 100
 
 # View audit logs
 ./scripts/audit-viewer.sh recent 50
@@ -58,15 +64,15 @@ cd debugger
 
 ```
 debugger/
-├── k8s/                          # OpenShift resource definitions
-│   ├── scc.yaml                  # Security Context Constraints
-│   ├── rbac.yaml                 # Role-Based Access Control
-│   ├── configmap.yaml            # Command validation scripts
-│   ├── daemonset.yaml            # Privileged container deployment
-│   └── job-template.yaml         # Job template for command execution
+├── k8s/                          # OpenShift resource definitions (legacy)
+│   ├── scc.yaml                  # Security Context Constraints (not needed with oc debug)
+│   ├── rbac.yaml                 # Role-Based Access Control (basic requirements)
+│   ├── configmap.yaml            # Command validation scripts (legacy)
+│   ├── daemonset.yaml            # Privileged container deployment (legacy)
+│   └── job-template.yaml         # Job template (replaced by oc debug)
 ├── scripts/                      # Management scripts
-│   ├── install.sh                # Main installation script
-│   ├── execute-command.sh        # Command execution interface
+│   ├── install.sh                # Basic setup script (minimal requirements)
+│   ├── execute-command.sh        # Command execution using oc debug node
 │   ├── audit-viewer.sh           # Audit log viewer and analyzer
 │   ├── setup-monitoring.sh       # Monitoring and alerting setup
 │   └── test-solution.sh          # Comprehensive test suite
@@ -80,23 +86,51 @@ debugger/
 └── README.md                     # This file
 ```
 
+## 🏗️ Architecture
+
+This solution implements the **Red Hat recommended approach** for network debugging in OpenShift 4.11+:
+
+### Core Components
+1. **`oc debug node`**: Creates temporary debug pods on target worker nodes
+2. **`nsenter`**: Enters specific pod network namespaces for isolated debugging
+3. **`crictl`**: Container runtime interface for pod inspection and namespace detection
+4. **Shell Scripts**: Command validation, audit logging, and user interface
+
+### Network Namespace Isolation
+- **Pod-specific debugging**: Uses `crictl inspectp` to find pod network namespace paths
+- **nsenter integration**: Executes commands within target pod's network context
+- **Host network fallback**: Supports node-level debugging when no specific pod is targeted
+
+### Security Model
+- **No persistent privileged containers**: Uses temporary debug pods only when needed
+- **Built-in OpenShift security**: Leverages `oc debug` security model
+- **Command validation**: Pre-execution filtering of dangerous operations
+- **Audit logging**: Complete traceability of all debugging activities
+
 ## 🛡️ Security Features
 
 ### Command Validation
 - **Allowed Commands**: Only `tcpdump` and `ncat`
-- **Blocked Operations**: File writes, command execution, pipe operations
+- **Blocked Operations**: File writes (outside safe paths), command execution, pipe operations
 - **Safety Parameters**: Automatic limits for packet capture counts
+- **Path Restrictions**: tcpdump output files must be in `/host/var/tmp/`
 
 ### Access Control
-- **RBAC Integration**: Proper OpenShift role-based access control
-- **Service Account Isolation**: Dedicated service account with minimal privileges
-- **Namespace Scoping**: Restricted to specific namespace operations
+- **OpenShift Native**: Uses `oc debug node` built-in access control
+- **User Authentication**: Leverages existing OpenShift authentication
+- **Namespace Validation**: Ensures pods exist in specified namespaces
+- **Node Access Control**: Standard OpenShift node access permissions
+
+### Network Isolation
+- **Pod Network Namespace**: Captures traffic only from target pod's network context
+- **No Cross-pod Access**: Network namespace isolation prevents accessing other pods
+- **Host Network Option**: Controlled host-level debugging when explicitly requested
 
 ### Audit and Monitoring
-- **Comprehensive Logging**: All executions logged with full context
-- **Real-time Alerts**: Immediate notifications for violations
-- **Prometheus Integration**: Metrics and alerting rules included
-- **Multiple Alert Channels**: Email, Slack, and syslog support
+- **Comprehensive Logging**: All executions logged with user, node, pod, and command details
+- **Real-time Tracking**: Immediate logging of command attempts and results
+- **File System Audit**: Tracks pcap file creation and access
+- **Violation Detection**: Logs and alerts on prohibited command attempts
 
 ## 📖 Documentation
 
@@ -106,28 +140,43 @@ debugger/
 
 ## 🔧 Common Use Cases
 
-### Network Troubleshooting
+### Pod-specific Network Debugging
 ```bash
-# Capture HTTP traffic
-./scripts/execute-command.sh worker-1 tcpdump -i eth0 -c 50 port 80
+# Capture HTTP traffic from specific pod
+./scripts/execute-command.sh worker-1 web-server default tcpdump -i eth0 -c 50 port 80
 
-# Check service connectivity
-./scripts/execute-command.sh worker-1 ncat -zv database-server 5432
+# Check database connectivity from application pod
+./scripts/execute-command.sh worker-1 app-pod myapp ncat -zv database-server 5432
 
-# Monitor DNS queries
-./scripts/execute-command.sh worker-1 tcpdump -i eth0 -c 20 port 53
+# Monitor DNS queries from specific pod
+./scripts/execute-command.sh worker-1 client-pod default tcpdump -i eth0 -c 20 port 53
+
+# Capture all traffic from pod's network namespace
+./scripts/execute-command.sh worker-1 debug-pod default tcpdump -i eth0 -c 100
 ```
 
-### Service Debugging
+### Service and Connectivity Testing
 ```bash
-# Test load balancer connectivity
-./scripts/execute-command.sh worker-1 ncat -zv load-balancer 443
+# Test load balancer connectivity from pod context
+./scripts/execute-command.sh worker-1 client-pod default ncat -zv load-balancer 443
 
-# Capture traffic to specific service
-./scripts/execute-command.sh worker-1 tcpdump -i eth0 -c 100 host service-ip
+# Capture traffic to specific service from pod
+./scripts/execute-command.sh worker-1 web-pod default tcpdump -i eth0 -c 100 host service-ip
 
-# Check port accessibility
-./scripts/execute-command.sh worker-1 ncat -z service-host 8080-8090
+# Check port range accessibility from pod
+./scripts/execute-command.sh worker-1 test-pod default ncat -z service-host 8080-8090
+
+# Save pcap file for analysis
+./scripts/execute-command.sh worker-1 app-pod default tcpdump -i eth0 -w /host/var/tmp/debug.pcap -c 1000
+```
+
+### Node-level Debugging
+```bash
+# Debug node's host network (when pod context is not needed)
+./scripts/execute-command.sh worker-2 - - tcpdump -i eth0 -c 100
+
+# Check node-level connectivity
+./scripts/execute-command.sh worker-2 - - ncat -zv external-service 443
 ```
 
 ## 📊 Monitoring and Alerting

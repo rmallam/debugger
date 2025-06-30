@@ -1,13 +1,13 @@
 #!/bin/bash
 
-# test-solution.sh - Test the debugger solution functionality
+# test-solution.sh - Test the debugger solution functionality using Red Hat approach
 # Usage: ./test-solution.sh [--verbose]
 
 set -e
 
 # Configuration
-NAMESPACE="fttc-ancillary"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TEMP_DIR="/tmp/debugger-test-$$"
 
 # Colors for output
 RED='\033[0;31m'
@@ -88,156 +88,193 @@ check_prerequisites() {
         return 1
     fi
     
-    # Check if namespace exists
-    if ! oc get namespace "$NAMESPACE" &> /dev/null; then
-        error "Namespace '$NAMESPACE' does not exist"
-        return 1
+    # Check cluster version for compatibility
+    local version=$(oc version -o json | jq -r '.openshiftVersion' 2>/dev/null || echo "unknown")
+    if [[ "$version" != "unknown" ]]; then
+        info "OpenShift version: $version"
+        if [[ ! "$version" =~ ^4\.(11|12|13|14|15) ]]; then
+            warn "This solution is optimized for OpenShift 4.11+. Current version: $version"
+        fi
     fi
+    
+    # Create temp directory
+    mkdir -p "$TEMP_DIR"
     
     verbose "Prerequisites check passed"
     return 0
 }
 
-# Test 1: Check if SCC exists and is properly configured
-test_scc_configuration() {
-    verbose "Testing SCC configuration..."
+# Test 1: Check if we can create debug pods on nodes
+test_debug_node_access() {
+    verbose "Testing debug node access..."
     
-    # Check if SCC exists
-    if ! oc get scc debugger-privileged-scc &> /dev/null; then
-        error "SCC 'debugger-privileged-scc' not found"
-        return 1
-    fi
-    
-    # Check required capabilities
-    local capabilities=$(oc get scc debugger-privileged-scc -o jsonpath='{.allowedCapabilities[*]}')
-    for cap in NET_ADMIN NET_RAW SYS_ADMIN SYS_PTRACE; do
-        if ! echo "$capabilities" | grep -q "$cap"; then
-            error "Missing capability: $cap"
-            return 1
-        fi
-    done
-    
-    # Check privileged container setting
-    local privileged=$(oc get scc debugger-privileged-scc -o jsonpath='{.allowPrivilegedContainer}')
-    if [[ "$privileged" != "true" ]]; then
-        error "SCC does not allow privileged containers"
-        return 1
-    fi
-    
-    verbose "SCC configuration is correct"
-    return 0
-}
-
-# Test 2: Check RBAC resources
-test_rbac_configuration() {
-    verbose "Testing RBAC configuration..."
-    
-    # Check service account
-    if ! oc get sa debugger-sa -n "$NAMESPACE" &> /dev/null; then
-        error "ServiceAccount 'debugger-sa' not found"
-        return 1
-    fi
-    
-    # Check role
-    if ! oc get role debugger-role -n "$NAMESPACE" &> /dev/null; then
-        error "Role 'debugger-role' not found"
-        return 1
-    fi
-    
-    # Check role binding
-    if ! oc get rolebinding debugger-rolebinding -n "$NAMESPACE" &> /dev/null; then
-        error "RoleBinding 'debugger-rolebinding' not found"
-        return 1
-    fi
-    
-    # Check cluster role
-    if ! oc get clusterrole debugger-node-access &> /dev/null; then
-        error "ClusterRole 'debugger-node-access' not found"
-        return 1
-    fi
-    
-    # Check cluster role binding
-    if ! oc get clusterrolebinding debugger-node-access-binding &> /dev/null; then
-        error "ClusterRoleBinding 'debugger-node-access-binding' not found"
-        return 1
-    fi
-    
-    verbose "RBAC configuration is correct"
-    return 0
-}
-
-# Test 3: Check ConfigMap and scripts
-test_configmap_scripts() {
-    verbose "Testing ConfigMap and scripts..."
-    
-    # Check if ConfigMap exists
-    if ! oc get configmap debugger-scripts -n "$NAMESPACE" &> /dev/null; then
-        error "ConfigMap 'debugger-scripts' not found"
-        return 1
-    fi
-    
-    # Check if required scripts are present
-    local scripts=$(oc get configmap debugger-scripts -n "$NAMESPACE" -o jsonpath='{.data}' | jq -r 'keys[]')
-    for script in command-validator.sh entrypoint.sh; do
-        if ! echo "$scripts" | grep -q "$script"; then
-            error "Missing script: $script"
-            return 1
-        fi
-    done
-    
-    verbose "ConfigMap and scripts are present"
-    return 0
-}
-
-# Test 4: Check DaemonSet deployment
-test_daemonset_deployment() {
-    verbose "Testing DaemonSet deployment..."
-    
-    # Check if DaemonSet exists
-    if ! oc get daemonset debugger-daemon -n "$NAMESPACE" &> /dev/null; then
-        error "DaemonSet 'debugger-daemon' not found"
-        return 1
-    fi
-    
-    # Check DaemonSet status
-    local desired=$(oc get daemonset debugger-daemon -n "$NAMESPACE" -o jsonpath='{.status.desiredNumberScheduled}')
-    local ready=$(oc get daemonset debugger-daemon -n "$NAMESPACE" -o jsonpath='{.status.numberReady}')
-    
-    if [[ "$ready" -eq 0 ]]; then
-        error "No DaemonSet pods are ready"
-        return 1
-    fi
-    
-    if [[ "$ready" -lt "$desired" ]]; then
-        warn "Not all DaemonSet pods are ready ($ready/$desired)"
-        # This is a warning, not a failure
-    fi
-    
-    verbose "DaemonSet deployment is healthy ($ready/$desired pods ready)"
-    return 0
-}
-
-# Test 5: Test basic command execution
-test_basic_command_execution() {
-    verbose "Testing basic command execution..."
-    
-    # Get first available worker node
-    local node=$(oc get nodes -l node-role.kubernetes.io/worker='' -o jsonpath='{.items[0].metadata.name}')
+    # Get first available node
+    local node=$(oc get nodes -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
     if [[ -z "$node" ]]; then
-        error "No worker nodes found"
+        error "No nodes found or accessible"
         return 1
     fi
     
-    verbose "Testing on node: $node"
+    verbose "Testing debug access to node: $node"
     
-    # Test tcpdump command (should succeed)
-    local temp_output="/tmp/test-output-$$.txt"
-    if timeout 60 "$SCRIPT_DIR/execute-command.sh" "$node" tcpdump -i lo -c 5 > "$temp_output" 2>&1; then
-        verbose "tcpdump command executed successfully"
+    # Test basic debug node access
+    local debug_result=0
+    timeout 30 oc debug node/"$node" -- echo "Debug node access test" &>/dev/null || debug_result=$?
+    
+    if [[ $debug_result -eq 0 ]]; then
+        verbose "Debug node access successful"
+        return 0
+    else
+        error "Cannot create debug pod on node $node (may require cluster-admin)"
+        return 1
+    fi
+}
+
+# Test 2: Check script execution and validation
+test_script_functionality() {
+    verbose "Testing script functionality..."
+    
+    local script_path="$SCRIPT_DIR/execute-command.sh"
+    
+    # Check if script exists and is executable
+    if [[ ! -x "$script_path" ]]; then
+        error "Execute script not found or not executable: $script_path"
+        return 1
+    fi
+    
+    # Test script parameter validation (should fail with insufficient args)
+    if "$script_path" 2>/dev/null; then
+        error "Script should fail with insufficient arguments"
+        return 1
+    fi
+    
+    # Test invalid command validation
+    local node=$(oc get nodes -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "test-node")
+    if "$script_path" "$node" - - "invalid-command" 2>/dev/null; then
+        error "Script should reject invalid commands"
+        return 1
+    fi
+    
+    verbose "Script validation working correctly"
+    return 0
+# Test 3: Test command validation logic
+test_command_validation() {
+    verbose "Testing command validation logic..."
+    
+    local script_path="$SCRIPT_DIR/execute-command.sh"
+    local node=$(oc get nodes -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "test-node")
+    
+    # Test 1: Valid tcpdump command (dry run check)
+    local output_file="$TEMP_DIR/validation_test.txt"
+    
+    # Test tcpdump validation
+    if echo "tcpdump -i eth0 -c 10" | bash -c "
+        source '$script_path'
+        validate_command tcpdump
+        validate_tcpdump_args -i eth0 -c 10
+    " &> "$output_file"; then
+        verbose "tcpdump validation passed"
+    else
+        error "tcpdump validation failed"
+        return 1
+    fi
+    
+    # Test ncat validation  
+    if echo "ncat -zv host 80" | bash -c "
+        source '$script_path'
+        validate_command ncat
+        validate_ncat_args -zv host 80
+    " &> "$output_file"; then
+        verbose "ncat validation passed"
+    else
+        error "ncat validation failed"
+        return 1
+    fi
+    
+    # Test dangerous command rejection
+    if echo "rm -rf /" | bash -c "
+        source '$script_path'
+        validate_command rm 2>/dev/null
+    " &> "$output_file"; then
+        error "Dangerous command was not rejected"
+        return 1
+    else
+        verbose "Dangerous command correctly rejected"
+    fi
+    
+    return 0
+}
+
+# Test 4: Test actual debug functionality (if cluster-admin)
+test_debug_functionality() {
+    verbose "Testing actual debug functionality..."
+    
+    local node=$(oc get nodes -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+    if [[ -z "$node" ]]; then
+        error "No nodes available for testing"
+        return 1
+    fi
+    
+    verbose "Testing debug functionality on node: $node"
+    
+    # Check if we have cluster-admin access (required for oc debug node)
+    if ! oc auth can-i debug nodes 2>/dev/null; then
+        warn "No cluster-admin access - skipping actual debug test"
+        info "To test debug functionality, run with cluster-admin privileges"
+        return 0  # Skip, don't fail
+    fi
+    
+    # Test basic oc debug node functionality
+    local test_output="$TEMP_DIR/debug_test.txt"
+    if timeout 30 oc debug node/"$node" -- echo "Debug test successful" > "$test_output" 2>&1; then
+        verbose "Debug node access working"
         if [[ "$VERBOSE" == "true" ]]; then
-            echo "Command output:"
-            cat "$temp_output"
+            echo "Debug output:"
+            cat "$test_output" 2>/dev/null || echo "No output captured"
         fi
+        return 0
+    else
+        error "Debug node access failed"
+        if [[ "$VERBOSE" == "true" ]]; then
+            echo "Debug error output:"
+            cat "$test_output" 2>/dev/null || echo "No error output captured"
+        fi
+        return 1
+    fi
+}
+
+# Test 5: Test audit logging functionality
+test_audit_logging() {
+    verbose "Testing audit logging functionality..."
+    
+    # Test audit log function
+    local audit_script="$TEMP_DIR/audit_test.sh"
+    cat > "$audit_script" << 'EOF'
+#!/bin/bash
+source "$1"
+audit_log "TEST" "test-node" "test-pod" "test-namespace" "test-command"
+EOF
+    chmod +x "$audit_script"
+    
+    local audit_output="$TEMP_DIR/audit_output.txt"
+    if "$audit_script" "$SCRIPT_DIR/execute-command.sh" > "$audit_output" 2>&1; then
+        if grep -q "AUDIT:" "$audit_output"; then
+            verbose "Audit logging functionality working"
+            return 0
+        else
+            error "Audit log format incorrect"
+            return 1
+        fi
+    else
+        error "Audit logging functionality failed"
+        return 1
+    fi
+}
+
+cleanup_test() {
+    verbose "Cleaning up test files..."
+    rm -rf "$TEMP_DIR"
+}
     else
         error "tcpdump command failed"
         cat "$temp_output" >&2
@@ -312,77 +349,17 @@ test_audit_logging() {
     return 0
 }
 
-# Test 8: Test job cleanup
-test_job_cleanup() {
-    verbose "Testing job cleanup mechanism..."
-    
-    # Check TTL configuration in job template
-    if ! grep -q "ttlSecondsAfterFinished: 3600" "$SCRIPT_DIR/../k8s/job-template.yaml"; then
-        error "Job template missing TTL configuration"
-        return 1
-    fi
-    
-    # Check for old jobs (should be cleaned up)
-    local old_jobs=$(oc get jobs -n "$NAMESPACE" --field-selector status.successful=1 --no-headers | wc -l)
-    
-    verbose "Found $old_jobs completed jobs (will be cleaned up automatically)"
-    return 0
-}
-
-# Test 9: Test resource limits
-test_resource_limits() {
-    verbose "Testing resource limits..."
-    
-    # Check DaemonSet resource limits
-    local limits=$(oc get daemonset debugger-daemon -n "$NAMESPACE" -o jsonpath='{.spec.template.spec.containers[0].resources.limits}')
-    
-    if [[ -z "$limits" ]]; then
-        warn "No resource limits set on DaemonSet"
-        # This is a warning, not a failure for basic functionality
-        return 0
-    fi
-    
-    verbose "Resource limits are configured"
-    return 0
-}
-
-# Test 10: Test monitoring setup (if available)
-test_monitoring_setup() {
-    verbose "Testing monitoring setup..."
-    
-    # Check if Prometheus monitoring is configured
-    if oc get servicemonitor debugger-audit-monitor -n "$NAMESPACE" &> /dev/null; then
-        verbose "ServiceMonitor found"
-    else
-        verbose "ServiceMonitor not found (monitoring not configured)"
-    fi
-    
-    if oc get prometheusrule debugger-alerts -n "$NAMESPACE" &> /dev/null; then
-        verbose "PrometheusRule found"
-    else
-        verbose "PrometheusRule not found (monitoring not configured)"
-    fi
-    
-    # This test always passes as monitoring is optional
-    return 0
-}
-
 # Function to run all tests
 run_all_tests() {
-    log "Starting debugger solution tests..."
+    log "Starting OpenShift Network Debugger tests (Red Hat solution approach)..."
     echo ""
     
     run_test "Prerequisites Check" check_prerequisites
-    run_test "SCC Configuration" test_scc_configuration
-    run_test "RBAC Configuration" test_rbac_configuration
-    run_test "ConfigMap and Scripts" test_configmap_scripts
-    run_test "DaemonSet Deployment" test_daemonset_deployment
-    run_test "Basic Command Execution" test_basic_command_execution
+    run_test "Debug Node Access" test_debug_node_access  
+    run_test "Script Functionality" test_script_functionality
     run_test "Command Validation" test_command_validation
+    run_test "Debug Functionality" test_debug_functionality
     run_test "Audit Logging" test_audit_logging
-    run_test "Job Cleanup Configuration" test_job_cleanup
-    run_test "Resource Limits" test_resource_limits
-    run_test "Monitoring Setup" test_monitoring_setup
 }
 
 # Function to show test summary
@@ -404,25 +381,40 @@ show_summary() {
         return 1
     else
         echo ""
-        log "All tests passed! The debugger solution is working correctly."
+        log "All tests passed! The Red Hat solution-based debugger is working correctly."
         return 0
     fi
 }
 
 # Function to show help
 show_help() {
-    echo "Usage: $0 [OPTIONS]"
+    echo "Usage: $0 [--verbose] [--help]"
+    echo ""
+    echo "Test the OpenShift Network Debugger solution using Red Hat recommended approach."
     echo ""
     echo "Options:"
     echo "  --verbose    Show detailed test output"
     echo "  --help       Show this help message"
     echo ""
-    echo "This script tests the OpenShift network debugger solution functionality."
-    echo "It verifies all components are properly installed and working."
+    echo "Requirements:"
+    echo "  - OpenShift 4.11+ cluster"
+    echo "  - oc CLI logged in"
+    echo "  - cluster-admin access (for debug node functionality)"
+    echo ""
+    echo "This test suite validates:"
+    echo "  - Prerequisites and environment setup"
+    echo "  - Debug node access using 'oc debug node'"
+    echo "  - Script functionality and validation"
+    echo "  - Command validation logic"
+    echo "  - Actual debug functionality (if cluster-admin)"
+    echo "  - Audit logging capabilities"
 }
 
 # Main function
 main() {
+    # Set up cleanup trap
+    trap cleanup_test EXIT
+    
     case "${1:-}" in
         --help|-h)
             show_help
