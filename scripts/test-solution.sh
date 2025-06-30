@@ -3,7 +3,7 @@
 # test-solution.sh - Test the debugger solution functionality using Red Hat approach
 # Usage: ./test-solution.sh [--verbose]
 
-set -e
+# Note: Not using 'set -e' globally to allow proper test failure handling
 
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -157,53 +157,7 @@ test_script_functionality() {
     
     verbose "Script validation working correctly"
     return 0
-# Test 3: Test command validation logic
-test_command_validation() {
-    verbose "Testing command validation logic..."
-    
-    local script_path="$SCRIPT_DIR/execute-command.sh"
-    local node=$(oc get nodes -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "test-node")
-    
-    # Test 1: Valid tcpdump command (dry run check)
-    local output_file="$TEMP_DIR/validation_test.txt"
-    
-    # Test tcpdump validation
-    if echo "tcpdump -i eth0 -c 10" | bash -c "
-        source '$script_path'
-        validate_command tcpdump
-        validate_tcpdump_args -i eth0 -c 10
-    " &> "$output_file"; then
-        verbose "tcpdump validation passed"
-    else
-        error "tcpdump validation failed"
-        return 1
-    fi
-    
-    # Test ncat validation  
-    if echo "ncat -zv host 80" | bash -c "
-        source '$script_path'
-        validate_command ncat
-        validate_ncat_args -zv host 80
-    " &> "$output_file"; then
-        verbose "ncat validation passed"
-    else
-        error "ncat validation failed"
-        return 1
-    fi
-    
-    # Test dangerous command rejection
-    if echo "rm -rf /" | bash -c "
-        source '$script_path'
-        validate_command rm 2>/dev/null
-    " &> "$output_file"; then
-        error "Dangerous command was not rejected"
-        return 1
-    else
-        verbose "Dangerous command correctly rejected"
-    fi
-    
-    return 0
-}
+# Test 3: Test command validation logic (removed duplicate)
 
 # Test 4: Test actual debug functionality (if cluster-admin)
 test_debug_functionality() {
@@ -244,46 +198,12 @@ test_debug_functionality() {
 }
 
 # Test 5: Test audit logging functionality
-test_audit_logging() {
-    verbose "Testing audit logging functionality..."
-    
-    # Test audit log function
-    local audit_script="$TEMP_DIR/audit_test.sh"
-    cat > "$audit_script" << 'EOF'
-#!/bin/bash
-source "$1"
-audit_log "TEST" "test-node" "test-pod" "test-namespace" "test-command"
-EOF
-    chmod +x "$audit_script"
-    
-    local audit_output="$TEMP_DIR/audit_output.txt"
-    if "$audit_script" "$SCRIPT_DIR/execute-command.sh" > "$audit_output" 2>&1; then
-        if grep -q "AUDIT:" "$audit_output"; then
-            verbose "Audit logging functionality working"
-            return 0
-        else
-            error "Audit log format incorrect"
-            return 1
-        fi
-    else
-        error "Audit logging functionality failed"
-        return 1
-    fi
-}
+# Test 5: Test audit logging functionality (removed duplicate)
 
 cleanup_test() {
     verbose "Cleaning up test files..."
     rm -rf "$TEMP_DIR"
 }
-    else
-        error "tcpdump command failed"
-        cat "$temp_output" >&2
-        rm -f "$temp_output"
-        return 1
-    fi
-    
-    rm -f "$temp_output"
-    return 0
 }
 
 # Test 6: Test command validation (should fail)
@@ -413,7 +333,7 @@ show_help() {
 # Main function
 main() {
     # Set up cleanup trap
-    trap cleanup_test EXIT
+    trap 'cleanup_test 2>/dev/null || true' EXIT
     
     case "${1:-}" in
         --help|-h)
@@ -434,7 +354,12 @@ main() {
     esac
     
     run_all_tests
-    show_summary
+    
+    if show_summary; then
+        exit 0
+    else
+        exit 1
+    fi
 }
 
 # Run main function

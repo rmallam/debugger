@@ -115,7 +115,7 @@ jobs:
         
         # Test installation script
         echo "Testing install.sh script..."
-        ./install.sh || echo "Install script completed with warnings"
+        ./install.sh
         
     - name: Test script functionality
       run: |
@@ -206,7 +206,7 @@ jobs:
         
         # Run the full test suite
         echo "Running test-solution.sh..."
-        ./test-solution.sh --verbose || echo "Some tests may have failed - checking results"
+        ./test-solution.sh --verbose
         
     - name: Test actual debug functionality (if cluster-admin)
       if: steps.check_admin.outputs.has_cluster_admin == 'true' && github.event.inputs.test_level == 'full'
