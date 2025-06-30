@@ -137,7 +137,7 @@ jobs:
         export NAMESPACE="$TARGET_NAMESPACE"
         
         # Run monitoring setup
-        ./setup-monitoring.sh || echo "Monitoring setup completed with warnings"
+        ./setup-monitoring.sh
         
     - name: Verify deployment
       if: github.event.inputs.action == 'deploy'
@@ -171,7 +171,7 @@ jobs:
         chmod +x *.sh
         
         # Test installation script
-        ./install.sh || echo "Install script completed"
+        ./install.sh
         
         echo "Deployment verification completed"
         
