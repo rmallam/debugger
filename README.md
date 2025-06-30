@@ -22,7 +22,7 @@ This solution enables application teams to run specific network debugging comman
 ### Prerequisites
 - OpenShift cluster 4.11+ (baremetal implementation)
 - OpenShift CLI (`oc`) installed and logged in
-- Cluster-admin privileges for initial setup
+- Cluster-admin privileges for initial setup and node debugging
 - Target pods and nodes must be accessible
 
 ### Installation
@@ -31,13 +31,34 @@ This solution enables application teams to run specific network debugging comman
 git clone <repository-url>
 cd debugger
 
-# No installation required - uses oc debug node approach
-# Optionally set up monitoring
-./scripts/setup-monitoring.sh
+# Basic setup (no persistent resources required)
+./scripts/install.sh
+
+# Set up GitHub Actions testing (optional)
+./scripts/setup-github-secrets.sh
 
 # Test the solution
 ./scripts/test-solution.sh
 ```
+
+### 🤖 Automated Testing
+This solution includes comprehensive GitHub Actions workflows for continuous testing:
+
+```bash
+# Set up automated testing on your OpenShift cluster
+./scripts/setup-github-secrets.sh
+
+# Manual workflow triggers available:
+# - basic: Quick validation
+# - full: Complete testing with actual command execution  
+# - namespace-admin-only: Test namespace admin user experience
+```
+
+**Benefits of Automated Testing:**
+- ✅ **Continuous Validation**: Automatically tests changes on real OpenShift clusters
+- ✅ **Permission Testing**: Validates both cluster-admin and namespace admin scenarios
+- ✅ **Multi-environment**: Test across development, staging, and production clusters
+- ✅ **Compliance Reports**: Generate detailed test reports for audit purposes
 
 ### Basic Usage
 ```bash
@@ -204,25 +225,50 @@ This solution implements the **Red Hat recommended approach** for network debugg
 
 ## 🧪 Testing
 
-The solution includes comprehensive tests:
+### Local Testing
+The solution includes comprehensive local tests:
 
 ```bash
-# Run all tests
+# Run all tests locally
 ./scripts/test-solution.sh
 
 # Run tests with detailed output
 ./scripts/test-solution.sh --verbose
 ```
 
+### Automated CI/CD Testing
+GitHub Actions workflows provide continuous testing on live OpenShift clusters:
+
+```bash
+# Set up automated testing (one-time setup)
+./scripts/setup-github-secrets.sh
+```
+
+**Test Scenarios:**
+- 🔵 **Basic Testing**: Script validation, parameter checking, RBAC syntax
+- 🟢 **Full Testing**: Complete solution including actual command execution
+- 🟡 **Namespace Admin**: Tests user experience with limited permissions
+
+**Test Coverage:**
+- ✅ **Permission Scenarios**: Both cluster-admin and namespace admin access
+- ✅ **OpenShift Compatibility**: Validates version 4.11+ features
+- ✅ **Command Execution**: Tests tcpdump and ncat in real environments  
+- ✅ **Error Handling**: Validates graceful permission limitation handling
+- ✅ **Security Controls**: Command validation and audit logging
+- ✅ **Cross-Environment**: Supports multiple cluster configurations
+
+**Viewing Results:**
+- GitHub Actions tab shows real-time test execution
+- Detailed test reports available as workflow artifacts
+- Failed tests include logs for troubleshooting
+
 Tests verify:
-- ✅ Security Context Constraints configuration
-- ✅ RBAC permissions and bindings
-- ✅ DaemonSet deployment and health
-- ✅ Command execution functionality
-- ✅ Command validation and blocking
-- ✅ Audit logging capabilities
-- ✅ Resource limits and cleanup
-- ✅ Monitoring integration
+- ✅ Red Hat solution compatibility (oc debug node approach)
+- ✅ Network namespace isolation functionality
+- ✅ Command validation and security controls
+- ✅ Audit logging and monitoring capabilities
+- ✅ RBAC configuration and permissions
+- ✅ Error handling for insufficient privileges
 
 ## 🔄 Maintenance
 
