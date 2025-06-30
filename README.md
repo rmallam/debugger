@@ -39,15 +39,35 @@ cd debugger
 
 # Test the solution
 ./scripts/test-solution.sh
+
+# Uninstall the solution (if needed)
+./scripts/install.sh --uninstall
 ```
 
-### 🤖 Automated Testing
-This solution includes comprehensive GitHub Actions workflows for continuous testing:
+### 🚀 Automated Deployment
+This solution includes GitHub Actions workflows for automated deployment to OpenShift:
 
 ```bash
-# Set up automated testing on your OpenShift cluster
+# Set up OpenShift credentials for automated deployment
 ./scripts/setup-github-secrets.sh
+```
 
+**Deployment Workflows:**
+- 🔄 **Deploy OpenShift Network Debugger**: Automated deployment using existing OPENSHIFT_API and OPENSHIFT_TOKEN secrets
+- 🗑️ **Uninstall**: Clean removal of all solution components
+- 🧪 **Test Solution**: Comprehensive testing on live OpenShift clusters
+
+**Workflow Features:**
+- ✅ **One-click deployment**: Deploy entire solution with single workflow trigger
+- ✅ **Namespace customization**: Deploy to any target namespace
+- ✅ **Monitoring setup**: Optional monitoring and alerting configuration
+- ✅ **Clean uninstall**: Complete removal of all resources
+- ✅ **Verification**: Comprehensive deployment verification and reporting
+
+### 🤖 Automated Testing
+The solution also includes comprehensive testing workflows:
+
+```bash
 # Manual workflow triggers available:
 # - basic: Quick validation
 # - full: Complete testing with actual command execution  

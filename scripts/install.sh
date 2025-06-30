@@ -163,6 +163,70 @@ show_usage_info() {
     echo ""
 }
 
+# Function to uninstall the solution
+uninstall_solution() {
+    log "Uninstalling OpenShift Network Debugger solution..."
+    
+    # Get current namespace or use default
+    local current_namespace=$(oc project -q 2>/dev/null || echo "fttc-ancillary")
+    
+    echo ""
+    warn "This will remove the debugger solution from namespace: $current_namespace"
+    warn "This action cannot be undone."
+    echo ""
+    read -p "Continue with uninstallation? [y/N]: " confirm
+    
+    if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+        log "Uninstallation cancelled"
+        exit 0
+    fi
+    
+    echo ""
+    log "Proceeding with uninstallation..."
+    
+    # Remove DaemonSet
+    log "Removing DaemonSet..."
+    oc delete daemonset debugger-daemon -n "$current_namespace" --ignore-not-found=true || warn "Failed to remove DaemonSet"
+    
+    # Remove ConfigMap
+    log "Removing ConfigMap..."
+    oc delete configmap debugger-scripts -n "$current_namespace" --ignore-not-found=true || warn "Failed to remove ConfigMap"
+    
+    # Remove namespace-scoped RBAC resources
+    log "Removing namespace RBAC resources..."
+    oc delete rolebinding debugger-rolebinding -n "$current_namespace" --ignore-not-found=true || warn "Failed to remove RoleBinding"
+    oc delete role debugger-role -n "$current_namespace" --ignore-not-found=true || warn "Failed to remove Role"
+    oc delete serviceaccount debugger-sa -n "$current_namespace" --ignore-not-found=true || warn "Failed to remove ServiceAccount"
+    
+    # Remove cluster-scoped resources (be careful here)
+    log "Removing cluster-scoped resources..."
+    oc delete clusterrolebinding debugger-node-access-binding --ignore-not-found=true || warn "Failed to remove ClusterRoleBinding"
+    oc delete clusterrole debugger-node-access --ignore-not-found=true || warn "Failed to remove ClusterRole"
+    oc delete scc debugger-privileged-scc --ignore-not-found=true || warn "Failed to remove SecurityContextConstraints"
+    
+    # Remove monitoring resources
+    log "Removing monitoring resources..."
+    oc delete configmap debugger-alert-config -n "$current_namespace" --ignore-not-found=true || true
+    
+    # Try to remove monitoring resources if they exist
+    if [[ -d "../monitoring" ]]; then
+        oc delete -f ../monitoring/ -n "$current_namespace" --ignore-not-found=true 2>/dev/null || true
+    fi
+    
+    # Clean up any remaining jobs
+    log "Cleaning up remaining jobs..."
+    oc delete jobs -l app=debugger -n "$current_namespace" --ignore-not-found=true || true
+    
+    # Wait for pods to terminate
+    log "Waiting for pods to terminate..."
+    oc wait --for=delete pods -l app=debugger-daemon -n "$current_namespace" --timeout=60s 2>/dev/null || echo "Some pods may still be terminating"
+    
+    log "✓ Uninstallation completed successfully!"
+    echo ""
+    info "The OpenShift Network Debugger solution has been removed from namespace: $current_namespace"
+    info "Audit logs may be preserved on the nodes for compliance purposes"
+}
+
 # Main function
 main() {
     case "${1:-}" in
@@ -172,10 +236,15 @@ main() {
             echo "Setup for OpenShift Network Debugger using Red Hat solution approach."
             echo ""
             echo "Options:"
-            echo "  -h, --help     Show this help message"
+            echo "  -h, --help       Show this help message"
+            echo "  --uninstall      Uninstall the debugger solution"
             echo ""
             echo "This script performs basic setup and verification for the"
             echo "Red Hat recommended network debugging approach in OpenShift 4.11+."
+            exit 0
+            ;;
+        --uninstall)
+            uninstall_solution
             exit 0
             ;;
         "")
