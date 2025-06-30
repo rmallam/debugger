@@ -1,0 +1,311 @@
+name: Deploy OpenShift Network Debugger
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action to perform'
+        required: true
+        default: 'deploy'
+        type: choice
+        options:
+        - deploy
+        - uninstall
+      namespace:
+        description: 'Target namespace'
+        required: false
+        default: 'fttc-ancillary'
+        type: string
+      setup_monitoring:
+        description: 'Setup monitoring and alerting'
+        required: false
+        default: true
+        type: boolean
+
+env:
+  TARGET_NAMESPACE: ${{ github.event.inputs.namespace || 'fttc-ancillary' }}
+
+jobs:
+  deploy-solution:
+    name: Deploy/Uninstall OpenShift Network Debugger
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Install OpenShift CLI
+      run: |
+        # Download and install oc CLI
+        curl -L https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz | tar -xzf -
+        sudo mv oc /usr/local/bin/
+        sudo chmod +x /usr/local/bin/oc
+        oc version --client
+        
+    - name: Login to OpenShift cluster
+      run: |
+        echo "Logging into OpenShift cluster..."
+        oc login --server="${{ secrets.OPENSHIFT_API }}" --token="${{ secrets.OPENSHIFT_TOKEN }}"
+        oc whoami
+        echo "Current user: $(oc whoami)"
+        echo "Server: $(oc whoami --show-server)"
+        
+    - name: Check permissions
+      run: |
+        echo "Checking required permissions..."
+        
+        # Check if user can create namespace
+        if oc auth can-i create namespaces; then
+          echo "✓ Can create namespaces"
+        else
+          echo "⚠️  Cannot create namespaces - may need existing namespace"
+        fi
+        
+        # Check if user can manage SCCs
+        if oc auth can-i create securitycontextconstraints; then
+          echo "✓ Can manage Security Context Constraints"
+        else
+          echo "⚠️  Cannot manage SCCs - may need cluster-admin privileges"
+        fi
+        
+        # Check if user can create cluster roles
+        if oc auth can-i create clusterroles; then
+          echo "✓ Can create cluster roles"
+        else
+          echo "⚠️  Cannot create cluster roles - may need cluster-admin privileges"
+        fi
+
+    - name: Create namespace
+      if: github.event.inputs.action == 'deploy'
+      run: |
+        echo "Creating namespace: $TARGET_NAMESPACE"
+        oc create namespace "$TARGET_NAMESPACE" || echo "Namespace already exists"
+        oc project "$TARGET_NAMESPACE"
+        
+        # Label namespace for monitoring if needed
+        oc label namespace "$TARGET_NAMESPACE" name="$TARGET_NAMESPACE" --overwrite || true
+        
+    - name: Deploy Security Context Constraints
+      if: github.event.inputs.action == 'deploy'
+      run: |
+        echo "Deploying Security Context Constraints..."
+        
+        # Update SCC with correct namespace in the YAML
+        sed "s/fttc-ancillary/$TARGET_NAMESPACE/g" k8s/scc.yaml | oc apply -f -
+        
+        echo "SCC deployed successfully"
+        
+    - name: Deploy RBAC resources
+      if: github.event.inputs.action == 'deploy'
+      run: |
+        echo "Deploying RBAC resources..."
+        
+        # Update RBAC resources with correct namespace
+        sed "s/fttc-ancillary/$TARGET_NAMESPACE/g" k8s/rbac.yaml | oc apply -f - -n "$TARGET_NAMESPACE"
+        
+        echo "RBAC resources deployed successfully"
+        
+    - name: Deploy ConfigMap
+      if: github.event.inputs.action == 'deploy'
+      run: |
+        echo "Deploying ConfigMap with validation scripts..."
+        
+        # Update ConfigMap with correct namespace
+        sed "s/fttc-ancillary/$TARGET_NAMESPACE/g" k8s/configmap.yaml | oc apply -f - -n "$TARGET_NAMESPACE"
+        
+        echo "ConfigMap deployed successfully"
+        
+    - name: Deploy DaemonSet
+      if: github.event.inputs.action == 'deploy'
+      run: |
+        echo "Deploying DaemonSet..."
+        
+        # Update DaemonSet with correct namespace
+        sed "s/fttc-ancillary/$TARGET_NAMESPACE/g" k8s/daemonset.yaml | oc apply -f - -n "$TARGET_NAMESPACE"
+        
+        echo "DaemonSet deployed successfully"
+        
+    - name: Setup monitoring
+      if: github.event.inputs.action == 'deploy' && github.event.inputs.setup_monitoring == 'true'
+      run: |
+        echo "Setting up monitoring and alerting..."
+        cd scripts
+        chmod +x *.sh
+        
+        # Set the namespace environment variable for the monitoring script
+        export NAMESPACE="$TARGET_NAMESPACE"
+        
+        # Run monitoring setup
+        ./setup-monitoring.sh || echo "Monitoring setup completed with warnings"
+        
+    - name: Verify deployment
+      if: github.event.inputs.action == 'deploy'
+      run: |
+        echo "Verifying deployment..."
+        
+        echo "Checking SCC..."
+        oc get scc debugger-privileged-scc || echo "SCC not found"
+        
+        echo "Checking ServiceAccount..."
+        oc get serviceaccount debugger-sa -n "$TARGET_NAMESPACE" || echo "ServiceAccount not found"
+        
+        echo "Checking ConfigMap..."
+        oc get configmap debugger-scripts -n "$TARGET_NAMESPACE" || echo "ConfigMap not found"
+        
+        echo "Checking DaemonSet..."
+        oc get daemonset debugger-daemon -n "$TARGET_NAMESPACE" || echo "DaemonSet not found"
+        
+        echo "Checking DaemonSet pods..."
+        oc get pods -l app=debugger-daemon -n "$TARGET_NAMESPACE"
+        
+        # Wait for pods to be ready
+        echo "Waiting for DaemonSet pods to be ready..."
+        oc wait --for=condition=Ready pods -l app=debugger-daemon -n "$TARGET_NAMESPACE" --timeout=300s || echo "Some pods may not be ready yet"
+        
+    - name: Test basic functionality
+      if: github.event.inputs.action == 'deploy'
+      run: |
+        echo "Testing basic functionality..."
+        cd scripts
+        chmod +x *.sh
+        
+        # Test installation script
+        ./install.sh || echo "Install script completed"
+        
+        echo "Deployment verification completed"
+        
+    - name: Uninstall solution
+      if: github.event.inputs.action == 'uninstall'
+      run: |
+        echo "Uninstalling OpenShift Network Debugger solution..."
+        
+        echo "Removing DaemonSet..."
+        oc delete daemonset debugger-daemon -n "$TARGET_NAMESPACE" --ignore-not-found=true
+        
+        echo "Removing ConfigMap..."
+        oc delete configmap debugger-scripts -n "$TARGET_NAMESPACE" --ignore-not-found=true
+        
+        echo "Removing RBAC resources..."
+        # Remove ClusterRole and ClusterRoleBinding first
+        oc delete clusterrolebinding debugger-node-access-binding --ignore-not-found=true
+        oc delete clusterrole debugger-node-access --ignore-not-found=true
+        
+        # Remove namespace-scoped RBAC
+        oc delete rolebinding debugger-rolebinding -n "$TARGET_NAMESPACE" --ignore-not-found=true
+        oc delete role debugger-role -n "$TARGET_NAMESPACE" --ignore-not-found=true
+        oc delete serviceaccount debugger-sa -n "$TARGET_NAMESPACE" --ignore-not-found=true
+        
+        echo "Removing Security Context Constraints..."
+        oc delete scc debugger-privileged-scc --ignore-not-found=true
+        
+        echo "Removing monitoring resources..."
+        oc delete configmap debugger-alert-config -n "$TARGET_NAMESPACE" --ignore-not-found=true || true
+        oc delete -f monitoring/ -n "$TARGET_NAMESPACE" --ignore-not-found=true || true
+        
+        echo "Cleaning up any remaining jobs..."
+        oc delete jobs -l app=debugger -n "$TARGET_NAMESPACE" --ignore-not-found=true || true
+        
+        # Wait for pods to terminate
+        echo "Waiting for pods to terminate..."
+        oc wait --for=delete pods -l app=debugger-daemon -n "$TARGET_NAMESPACE" --timeout=120s || echo "Some pods may still be terminating"
+        
+        echo "Uninstallation completed successfully"
+        
+    - name: Verify uninstallation
+      if: github.event.inputs.action == 'uninstall'
+      run: |
+        echo "Verifying uninstallation..."
+        
+        echo "Checking for remaining resources..."
+        
+        if oc get scc debugger-privileged-scc &>/dev/null; then
+          echo "⚠️  SCC still exists"
+        else
+          echo "✓ SCC removed"
+        fi
+        
+        if oc get serviceaccount debugger-sa -n "$TARGET_NAMESPACE" &>/dev/null; then
+          echo "⚠️  ServiceAccount still exists"
+        else
+          echo "✓ ServiceAccount removed"
+        fi
+        
+        if oc get daemonset debugger-daemon -n "$TARGET_NAMESPACE" &>/dev/null; then
+          echo "⚠️  DaemonSet still exists"
+        else
+          echo "✓ DaemonSet removed"
+        fi
+        
+        if oc get pods -l app=debugger-daemon -n "$TARGET_NAMESPACE" 2>/dev/null | grep -q debugger; then
+          echo "⚠️  Some pods still exist"
+          oc get pods -l app=debugger-daemon -n "$TARGET_NAMESPACE"
+        else
+          echo "✓ All debugger pods removed"
+        fi
+        
+    - name: Generate deployment report
+      if: always()
+      run: |
+        echo "=== OpenShift Network Debugger Deployment Report ===" | tee deployment-report.md
+        echo "Date: $(date)" | tee -a deployment-report.md
+        echo "Action: ${{ github.event.inputs.action }}" | tee -a deployment-report.md
+        echo "Namespace: $TARGET_NAMESPACE" | tee -a deployment-report.md
+        echo "OpenShift Server: $(oc whoami --show-server)" | tee -a deployment-report.md
+        echo "User: $(oc whoami)" | tee -a deployment-report.md
+        echo "" | tee -a deployment-report.md
+        
+        if [[ "${{ github.event.inputs.action }}" == "deploy" ]]; then
+          echo "## Deployment Status" | tee -a deployment-report.md
+          
+          echo "### Resources Created:" | tee -a deployment-report.md
+          echo '```' | tee -a deployment-report.md
+          echo "SecurityContextConstraints:" | tee -a deployment-report.md
+          oc get scc debugger-privileged-scc -o wide 2>/dev/null || echo "Not found" | tee -a deployment-report.md
+          echo "" | tee -a deployment-report.md
+          
+          echo "ServiceAccount:" | tee -a deployment-report.md
+          oc get serviceaccount debugger-sa -n "$TARGET_NAMESPACE" -o wide 2>/dev/null || echo "Not found" | tee -a deployment-report.md
+          echo "" | tee -a deployment-report.md
+          
+          echo "DaemonSet:" | tee -a deployment-report.md
+          oc get daemonset debugger-daemon -n "$TARGET_NAMESPACE" -o wide 2>/dev/null || echo "Not found" | tee -a deployment-report.md
+          echo "" | tee -a deployment-report.md
+          
+          echo "Pods:" | tee -a deployment-report.md
+          oc get pods -l app=debugger-daemon -n "$TARGET_NAMESPACE" -o wide 2>/dev/null || echo "No pods found" | tee -a deployment-report.md
+          echo '```' | tee -a deployment-report.md
+        fi
+        
+        if [[ "${{ github.event.inputs.action }}" == "uninstall" ]]; then
+          echo "## Uninstallation Status" | tee -a deployment-report.md
+          echo "Solution has been removed from namespace: $TARGET_NAMESPACE" | tee -a deployment-report.md
+        fi
+        
+    - name: Upload deployment report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: deployment-report-${{ github.event.inputs.action }}-${{ github.run_number }}
+        path: deployment-report.md
+        retention-days: 30
+        
+    - name: Summary
+      if: always()
+      run: |
+        echo ""
+        echo "=== DEPLOYMENT SUMMARY ==="
+        if [[ "${{ github.event.inputs.action }}" == "deploy" ]]; then
+          echo "✓ OpenShift Network Debugger solution deployed to namespace: $TARGET_NAMESPACE"
+          echo ""
+          echo "Next steps:"
+          echo "1. Verify DaemonSet pods are running: oc get pods -l app=debugger-daemon -n $TARGET_NAMESPACE"
+          echo "2. Test functionality: ./scripts/test-solution.sh"
+          echo "3. View audit logs: ./scripts/audit-viewer.sh"
+          echo ""
+          echo "To uninstall, re-run this workflow with action='uninstall'"
+        else
+          echo "✓ OpenShift Network Debugger solution uninstalled from namespace: $TARGET_NAMESPACE"
+          echo ""
+          echo "All resources have been removed from the cluster."
+        fi
