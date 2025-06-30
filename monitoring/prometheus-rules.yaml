@@ -1,0 +1,67 @@
+---
+apiVersion: v1
+kind: ServiceMonitor
+metadata:
+  name: debugger-audit-monitor
+  namespace: fttc-ancillary
+  labels:
+    app: debugger-daemon
+spec:
+  selector:
+    matchLabels:
+      app: debugger-daemon
+  endpoints:
+  - port: metrics
+    interval: 30s
+    path: /metrics
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: debugger-alerts
+  namespace: fttc-ancillary
+  labels:
+    app: debugger-daemon
+spec:
+  groups:
+  - name: debugger.rules
+    rules:
+    - alert: DebuggerPrivilegeViolation
+      expr: increase(debugger_privilege_violations_total[5m]) > 0
+      for: 0m
+      labels:
+        severity: critical
+        component: debugger
+      annotations:
+        summary: "Privilege violation detected in debugger solution"
+        description: "User {{ $labels.user }} attempted to execute unauthorized command on node {{ $labels.node }}"
+        
+    - alert: DebuggerUnauthorizedCommand
+      expr: increase(debugger_unauthorized_commands_total[5m]) > 0
+      for: 0m
+      labels:
+        severity: warning
+        component: debugger
+      annotations:
+        summary: "Unauthorized command attempted"
+        description: "Unauthorized command '{{ $labels.command }}' was blocked for user {{ $labels.user }}"
+        
+    - alert: DebuggerDaemonDown
+      expr: up{job="debugger-daemon"} == 0
+      for: 2m
+      labels:
+        severity: warning
+        component: debugger
+      annotations:
+        summary: "Debugger daemon is down"
+        description: "Debugger daemon on node {{ $labels.instance }} has been down for more than 2 minutes"
+        
+    - alert: DebuggerHighJobFailureRate
+      expr: rate(debugger_job_failures_total[5m]) > 0.1
+      for: 5m
+      labels:
+        severity: warning
+        component: debugger
+      annotations:
+        summary: "High job failure rate in debugger"
+        description: "Debugger job failure rate is {{ $value }} failures per second"
