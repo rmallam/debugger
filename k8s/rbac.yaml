@@ -1,0 +1,75 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: debugger-sa
+  namespace: fttc-ancillary
+  annotations:
+    description: "Service account for network debugging operations"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: fttc-ancillary
+  name: debugger-role
+  annotations:
+    description: "Role for managing network debugging jobs and pods"
+rules:
+- apiGroups: [""]
+  resources: ["pods", "pods/log", "pods/exec"]
+  verbs: ["get", "list", "create", "delete", "watch"]
+- apiGroups: ["batch"]
+  resources: ["jobs"]
+  verbs: ["get", "list", "create", "delete", "watch"]
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "list", "create", "update", "patch"]
+  resourceNames: ["debugger-audit-log", "debugger-access-control"]
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: debugger-rolebinding
+  namespace: fttc-ancillary
+subjects:
+- kind: ServiceAccount
+  name: debugger-sa
+  namespace: fttc-ancillary
+- kind: User
+  name: system:admin  # Replace with actual application team users/groups
+  apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: Role
+  name: debugger-role
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: debugger-node-access
+  annotations:
+    description: "Cluster role for node-level access for debugging"
+rules:
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get", "list"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "create", "delete"]
+  resourceNames: ["debugger-*"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: debugger-node-access-binding
+subjects:
+- kind: ServiceAccount
+  name: debugger-sa
+  namespace: fttc-ancillary
+roleRef:
+  kind: ClusterRole
+  name: debugger-node-access
+  apiGroup: rbac.authorization.k8s.io

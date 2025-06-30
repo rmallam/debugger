@@ -1,0 +1,107 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: debugger-fluentd-config
+  namespace: fttc-ancillary
+data:
+  fluent.conf: |
+    <source>
+      @type tail
+      path /var/log/debugger/*.log
+      pos_file /var/log/fluentd-debugger.log.pos
+      tag debugger.audit
+      format json
+      time_key timestamp
+      time_format %Y-%m-%dT%H:%M:%SZ
+    </source>
+    
+    <filter debugger.audit>
+      @type record_transformer
+      <record>
+        service debugger
+        environment #{ENV['CLUSTER_NAME'] || 'unknown'}
+        namespace #{ENV['NAMESPACE'] || 'unknown'}
+      </record>
+    </filter>
+    
+    # Send violations to security team
+    <match debugger.audit>
+      @type copy
+      <store>
+        @type forward
+        <server>
+          host "#{ENV['LOG_FORWARDING_HOST'] || 'localhost'}"
+          port "#{ENV['LOG_FORWARDING_PORT'] || '24224'}"
+        </server>
+        <buffer>
+          @type file
+          path /var/log/buffer/debugger
+          flush_mode interval
+          flush_interval 10s
+          chunk_limit_size 2m
+          queue_limit_length 32
+        </buffer>
+      </store>
+      
+      # Also send to local syslog for immediate alerting
+      <store>
+        @type copy
+        <store ignore_error>
+          @type exec
+          command /opt/scripts/alert-handler.sh
+          <format>
+            @type json
+          </format>
+          <buffer>
+            @type memory
+            flush_mode immediate
+          </buffer>
+        </store>
+      </store>
+    </match>
+  
+  alert-handler.sh: |
+    #!/bin/bash
+    
+    # Alert handler script for immediate violation alerts
+    
+    while IFS= read -r line; do
+        # Parse JSON log entry
+        timestamp=$(echo "$line" | jq -r '.timestamp // empty')
+        user=$(echo "$line" | jq -r '.user // empty')
+        node=$(echo "$line" | jq -r '.node // empty')
+        action=$(echo "$line" | jq -r '.action // empty')
+        command=$(echo "$line" | jq -r '.command // empty')
+        
+        # Send alert for violations
+        if [[ "$action" == "VIOLATION" ]]; then
+            # Send to syslog
+            logger -p security.crit -t debugger-alert "PRIVILEGE VIOLATION: User $user attempted unauthorized command '$command' on node $node at $timestamp"
+            
+            # Send email alert (if configured)
+            if [[ -n "${ALERT_EMAIL}" ]]; then
+                {
+                    echo "Subject: [SECURITY ALERT] Debugger Privilege Violation"
+                    echo "To: ${ALERT_EMAIL}"
+                    echo ""
+                    echo "SECURITY ALERT: Privilege violation detected in debugger solution"
+                    echo ""
+                    echo "Details:"
+                    echo "  User: $user"  
+                    echo "  Node: $node"
+                    echo "  Command: $command"
+                    echo "  Timestamp: $timestamp"
+                    echo ""
+                    echo "This violation has been logged and requires immediate attention."
+                } | sendmail "${ALERT_EMAIL}" 2>/dev/null || true
+            fi
+            
+            # Send Slack notification (if configured)
+            if [[ -n "${SLACK_WEBHOOK_URL}" ]]; then
+                curl -X POST -H 'Content-type: application/json' \
+                    --data "{\"text\":\"🚨 **SECURITY ALERT**: Debugger privilege violation\\n**User:** $user\\n**Node:** $node\\n**Command:** $command\\n**Time:** $timestamp\"}" \
+                    "${SLACK_WEBHOOK_URL}" 2>/dev/null || true
+            fi
+        fi
+    done
