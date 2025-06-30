@@ -179,32 +179,32 @@ setup_nsenter_params() {
     local namespace="$2"
     
     if [[ "$pod_name" == "-" || "$namespace" == "-" ]]; then
-        echo "No specific pod target - using host network namespace"
+        echo "No specific pod target - using host network namespace" >&2
         echo "nsenter_parameters=\"\""
         return 0
     fi
     
-    echo "Setting up nsenter parameters for pod $pod_name in namespace $namespace..."
+    echo "Setting up nsenter parameters for pod $pod_name in namespace $namespace..." >&2
     
     # Get pod ID using crictl
     local pod_id=$(chroot /host crictl pods --namespace "${namespace}" --name "${pod_name}" -q 2>/dev/null || echo "")
     
     if [[ -z "$pod_id" ]]; then
-        echo "ERROR: Could not find pod $pod_name in namespace $namespace on this node"
+        echo "ERROR: Could not find pod $pod_name in namespace $namespace on this node" >&2
         return 1
     fi
     
-    echo "Found pod ID: $pod_id"
+    echo "Found pod ID: $pod_id" >&2
     
     # Get network namespace path using crictl inspectp (for OpenShift 4.9+)
     local ns_path="/host$(chroot /host bash -c "crictl inspectp $pod_id | jq '.info.runtimeSpec.linux.namespaces[]|select(.type==\"network\").path' -r" 2>/dev/null || echo "")"
     
     if [[ -z "$ns_path" || "$ns_path" == "/host" ]]; then
-        echo "ERROR: Could not determine network namespace path for pod $pod_name"
+        echo "ERROR: Could not determine network namespace path for pod $pod_name" >&2
         return 1
     fi
     
-    echo "Network namespace path: $ns_path"
+    echo "Network namespace path: $ns_path" >&2
     echo "nsenter_parameters=\"--net=${ns_path}\""
     return 0
 }
