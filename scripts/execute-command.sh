@@ -54,12 +54,16 @@ check_prerequisites() {
 # Function to validate command
 validate_command() {
     local cmd="$1"
-    
-    if [[ "$cmd" != "tcpdump" && "$cmd" != "ncat" ]]; then
-        error "Only 'tcpdump' and 'ncat' commands are allowed"
+    if [[ "$cmd" != "tcpdump" && "$cmd" != "ncat" && "$cmd" != "ip" && "$cmd" != "ifconfig" ]]; then
+        error "Only 'tcpdump', 'ncat', 'ip', and 'ifconfig' commands are allowed"
         echo "Usage: $0 <node-name> <pod-name> <pod-namespace> <command> [arguments...]"
         echo "Usage: $0 <node-name> - - <command> [arguments...]  # for node-level debugging"
         exit 1
+    fi
+    # If ip or ifconfig, validate further
+    if [[ "$cmd" == "ip" || "$cmd" == "ifconfig" ]]; then
+        shift
+        validate_network_command "$cmd" "$@"
     fi
 }
 
@@ -89,6 +93,27 @@ validate_ncat_args() {
     # Basic validation for ncat
     if echo "$args" | grep -E "(--exec|--sh-exec|-e|>|>>|\||&)" > /dev/null; then
         error "Dangerous ncat options detected"
+        exit 1
+    fi
+}
+
+# Function to validate allowed read-only network commands
+validate_network_command() {
+    local cmd="$1"
+    shift
+    local args="$@"
+    # Allow only read-only ip commands (ip, ip a, ip addr, ip link, ip route, ip -o -br a, etc) and ifconfig
+    if [[ "$cmd" == "ip" ]]; then
+        # Disallow any modifying subcommands (add, del, flush, set, etc)
+        if echo "$args" | grep -E -wq '(add|del|delete|flush|set|change|replace|link set|route add|route del|route flush|neigh add|neigh del|neigh flush|tunnel add|tunnel del|tunnel change|tunnel set|address add|address del|address flush|addr add|addr del|addr flush|rule add|rule del|rule flush|maddress add|maddress del|maddress flush|mroute add|mroute del|mroute flush|monitor|xfrm|tcp_metrics|token|macsec|vrf|netns|netconf|netem|qdisc|class|filter|mptcp|sr|srdev|srpolicy|srroute|srseg|srlabel|srencap|sren|srdecap|srpop|srpush|srpophead|srpoptail|srpopall|srpopalltail|srpopallhead|srpopalltailheadall|srpopalltailheadallpop|srpopalltailheadallpopall|srpopalltailheadallpopallpop|srpopalltailheadallpopallpopall|srpopalltailheadallpopallpopallpop|srpopalltailheadallpopallpopallpopallpop|srpopalltailheadallpopallpopallpopallpopall|srpopalltailheadallpopallpopallpopallpopallpop|srpopalltailheadallpopallpopallpopallpopallpopall|srpopalltailheadallpopallpopallpopallpopallpopallpop|srpopalltailheadallpopallpopallpopallpopallpopallpopall|srpopalltailheadallpopallpopallpopallpopallpopallpopallpop)' ; then
+            error "Modifying 'ip' subcommands are not allowed. Only read-only queries are permitted."
+            exit 1
+        fi
+    elif [[ "$cmd" == "ifconfig" ]]; then
+        # ifconfig is always allowed (read-only)
+        return 0
+    else
+        error "Only 'tcpdump', 'ncat', 'ip', and 'ifconfig' commands are allowed."
         exit 1
     fi
 }
@@ -153,17 +178,24 @@ create_debug_script() {
     local args="$@"
     
     local script_file="$TEMP_DIR/debug-script.sh"
-    
     cat > "$script_file" << 'EOF'
 #!/bin/bash
 set -e
-
 NODE_NAME="$1"
 POD_NAME="$2"
 NAMESPACE="$3"
 COMMAND="$4"
 shift 4
 ARGS="$@"
+CAPTURE_DURATION="${!#}"
+# Remove last arg (duration) from ARGS if present and numeric (to avoid passing it to tcpdump)
+if [[ "$COMMAND" == "tcpdump" ]]; then
+    set -- $ARGS
+    if [[ "$CAPTURE_DURATION" =~ ^[0-9]+$ ]] && [[ "${!#}" == "$CAPTURE_DURATION" ]]; then
+        set -- "${@:1:$(($#-1))}"
+    fi
+    ARGS="$*"
+fi
 
 echo "=== OpenShift Network Debugger ==="
 echo "Node: $NODE_NAME"
@@ -219,22 +251,35 @@ fi
 # Extract nsenter parameters
 eval "$nsenter_params_result"
 
-# Show available interfaces
-echo ""
-echo "Available network interfaces:"
+
+
+# Prompt user to select interface if not already specified in ARGS
+if [[ "$COMMAND" == "tcpdump" ]]; then
+# Show available interfaces in the correct network namespace
 if [[ -n "$nsenter_parameters" ]]; then
-    nsenter $nsenter_parameters -- chroot /host ip a 2>/dev/null || chroot /host ip a
+    echo "[INFO] Listing interfaces in pod network namespace..." >&2
+    nsenter $nsenter_parameters -- chroot /host ip -o -br a 2>/dev/null || nsenter $nsenter_parameters -- ip -o -br a
 else
-    chroot /host ip a
+    echo "[INFO] Listing interfaces in host network namespace..." >&2
+    chroot /host ip -o -br a
+fi
+    if ! echo "$ARGS" | grep -E '\-i[ ]*[^ ]+' > /dev/null; then
+        echo ""
+        echo "Please enter the interface to use for tcpdump (e.g. eth0, or type 'all' for all interfaces):"
+        read -r SELECTED_IFACE
+        if [[ -z "$SELECTED_IFACE" ]]; then
+            echo "No interface selected. Exiting."
+            exit 1
+        fi
+        if [[ "$SELECTED_IFACE" == "all" ]]; then
+            ARGS="-i any $ARGS"
+        else
+            ARGS="-i $SELECTED_IFACE $ARGS"
+        fi
+    fi
 fi
 
-echo ""
-echo "Available interfaces for tcpdump:"
-if [[ -n "$nsenter_parameters" ]]; then
-    nsenter $nsenter_parameters -- tcpdump -D 2>/dev/null || echo "tcpdump -D failed"
-else
-    tcpdump -D 2>/dev/null || echo "tcpdump -D failed"
-fi
+
 
 echo ""
 echo "Executing command: $COMMAND $ARGS"
@@ -242,23 +287,40 @@ echo "=================================="
 
 # Execute the command based on type
 if [[ "$COMMAND" == "tcpdump" ]]; then
-    # Ensure output directory exists
     mkdir -p /host/var/tmp
-    
-    # Add default output file if -w not specified
+    ARGS=$(echo "$ARGS" | sed 's/-c[ ]*[0-9]*//g')
     if ! echo "$ARGS" | grep -q "\-w"; then
         OUTPUT_FILE="/host/var/tmp/${NODE_NAME}_$(date +%d_%m_%Y-%H_%M_%S-%Z).pcap"
         ARGS="-w $OUTPUT_FILE $ARGS"
         echo "Output will be saved to: $OUTPUT_FILE"
     fi
-    
-    # Execute tcpdump with nsenter if we have pod context
-    if [[ -n "$nsenter_parameters" ]]; then
-        echo "Running tcpdump in pod network namespace..."
-        nsenter $nsenter_parameters -- tcpdump -nn $ARGS
+    if [[ -n "$CAPTURE_DURATION" ]]; then
+        if [[ -n "$nsenter_parameters" ]]; then
+            echo "Running tcpdump in pod network namespace for $CAPTURE_DURATION seconds..."
+            echo "[DEBUG] About to run: nsenter $nsenter_parameters -- timeout $CAPTURE_DURATION tcpdump -nn $ARGS" >&2
+            nsenter $nsenter_parameters -- timeout --preserve-status $CAPTURE_DURATION tcpdump -nn $ARGS
+            result=$?
+        else
+            echo "Running tcpdump in host network namespace for $CAPTURE_DURATION seconds..."
+            echo "[DEBUG] About to run: timeout $CAPTURE_DURATION tcpdump -nn $ARGS" >&2
+            timeout --preserve-status $CAPTURE_DURATION tcpdump -nn $ARGS
+            result=$?
+        fi
+        if [[ $result -eq 124 ]]; then
+            echo "tcpdump completed after timeout ($CAPTURE_DURATION seconds)"
+            result=0
+        fi
+        exit $result
     else
-        echo "Running tcpdump in host network namespace..."
-        tcpdump -nn $ARGS
+        if [[ -n "$nsenter_parameters" ]]; then
+            echo "Running tcpdump in pod network namespace... (Press Ctrl+C to stop)"
+            echo "[DEBUG] About to run: nsenter $nsenter_parameters -- tcpdump -nn $ARGS" >&2
+            nsenter $nsenter_parameters -- tcpdump -nn $ARGS
+        else
+            echo "Running tcpdump in host network namespace... (Press Ctrl+C to stop)"
+            echo "[DEBUG] About to run: tcpdump -nn $ARGS" >&2
+            tcpdump -nn $ARGS
+        fi
     fi
     
 elif [[ "$COMMAND" == "ncat" ]]; then
@@ -269,6 +331,14 @@ elif [[ "$COMMAND" == "ncat" ]]; then
     else
         echo "Running ncat in host network namespace..."
         ncat $ARGS
+    fi
+elif [[ "$COMMAND" == "ip" || "$COMMAND" == "ifconfig" ]]; then
+    if [[ -n "$nsenter_parameters" ]]; then
+        echo "Running $COMMAND in pod network namespace..."
+        nsenter $nsenter_parameters -- $COMMAND $ARGS
+    else
+        echo "Running $COMMAND in host network namespace..."
+        $COMMAND $ARGS
     fi
 else
     echo "ERROR: Unsupported command: $COMMAND"
@@ -287,6 +357,80 @@ EOF
 
     chmod +x "$script_file"
     echo "$script_file"
+}
+
+# Function to create a debug script for listing interfaces only
+create_list_interfaces_script() {
+    local node_name="$1"
+    local pod_name="$2"
+    local namespace="$3"
+    local script_file="$TEMP_DIR/list-interfaces.sh"
+    cat > "$script_file" << 'EOF'
+#!/bin/bash
+set -e
+NODE_NAME="$1"
+POD_NAME="$2"
+NAMESPACE="$3"
+# Setup nsenter parameters for pod if needed (reuse logic if required)
+echo "Available network interfaces on node $NODE_NAME (pod: $POD_NAME, ns: $NAMESPACE):"
+chroot /host ip -o -br a
+EOF
+    chmod +x "$script_file"
+    echo "$script_file"
+}
+
+# Function to run a debug pod to list interfaces and print them locally
+run_list_interfaces_debug() {
+    local node_name="$1"
+    local pod_name="$2"
+    local namespace="$3"
+    log "Launching debug pod to list interfaces on node $node_name..."
+    local list_script=$(create_list_interfaces_script "$node_name" "$pod_name" "$namespace")
+    oc debug node/"$node_name" -- bash -c "cat > /tmp/list-interfaces.sh << 'SCRIPT_EOF'
+$(cat "$list_script")
+SCRIPT_EOF
+chmod +x /tmp/list-interfaces.sh
+/tmp/list-interfaces.sh '$node_name' '$pod_name' '$namespace'" || true
+}
+
+# Function to create debug pod
+create_debug_pod() {
+    local node_name="$1"
+    local debug_pod_name="debugger-daemon-$node_name"
+    
+    # Check if debug pod already exists
+    if oc get pod "$debug_pod_name" -n kube-system &> /dev/null; then
+        log "Debug pod $debug_pod_name already exists"
+        return 0
+    fi
+    
+    log "Creating debug pod $debug_pod_name on node $node_name..."
+    # Create debug pod YAML
+    cat << EOF | oc apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: $debug_pod_name
+  namespace: kube-system
+  labels:
+    app: debugger-daemon
+spec:
+  containers:
+  - name: debugger
+    image: registry.access.redhat.com/ubi8/ubi-minimal:latest
+    command: ["/bin/bash", "-c", "while true; do sleep 3600; done"]
+  nodeSelector:
+    kubernetes.io/hostname: $node_name
+EOF
+}
+
+# Function to delete debug pod
+delete_debug_pod() {
+    local node_name="$1"
+    local debug_pod_name="debugger-daemon-$node_name"
+    
+    log "Deleting debug pod $debug_pod_name..."
+    oc delete pod "$debug_pod_name" -n kube-system --grace-period=0 --force || true
 }
 
 # Function to execute command using oc debug node
@@ -340,22 +484,33 @@ SCRIPT_EOF
     return $debug_result
 }
 
+# Function to execute list-interfaces using oc debug node
+execute_list_interfaces() {
+    local node_name="$1"
+    local pod_name="$2"
+    local namespace="$3"
+    local user=$(get_current_user)
+    log "Starting interface listing debug session on node '$node_name'"
+    audit_log "LIST_INTERFACES" "$node_name" "$pod_name" "$namespace" "list-interfaces"
+    local script_file=$(create_list_interfaces_script "$node_name" "$pod_name" "$namespace")
+    log "Created list-interfaces script: $script_file"
+    oc debug node/"$node_name" -- bash -c "cat > /tmp/list-interfaces.sh << 'SCRIPT_EOF'
+$(cat "$script_file")
+SCRIPT_EOF
+chmod +x /tmp/list-interfaces.sh
+/tmp/list-interfaces.sh '$node_name' '$pod_name' '$namespace'" 
+}
+
 # Function to copy pcap files from debug pod
 copy_pcap_files() {
     local node_name="$1"
     
     log "Checking for pcap files to copy from node $node_name..."
-    
-    # Get the debug pod name (it follows a pattern)
-    local debug_pod=$(oc get pods --field-selector=spec.nodeName="$node_name" -l app=debug -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
-    
-    if [[ -z "$debug_pod" ]]; then
-        warn "Could not find debug pod for node $node_name to copy files"
-        return 1
-    fi
+    local debug_pod=$(oc get pods --field-selector=spec.nodeName="$node_name" -l app=debugger-daemon -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null || echo "")
+
     
     # Get debug pod namespace
-    local debug_namespace=$(oc get pods --field-selector=spec.nodeName="$node_name" -l app=debug -o jsonpath='{.items[0].metadata.namespace}' 2>/dev/null || echo "")
+    local debug_namespace=$(oc get pods --field-selector=spec.nodeName="$node_name" -l app=debugger-daemon -o jsonpath='{.items[0].metadata.namespace}' 2>/dev/null || echo "")
     
     if [[ -z "$debug_namespace" ]]; then
         warn "Could not determine debug pod namespace"
@@ -363,41 +518,28 @@ copy_pcap_files() {
     fi
     
     log "Debug pod: $debug_pod in namespace $debug_namespace"
-    
+    timestamp=$(date +%s)
+    tempdir="/host/tmp/pcapcopy-$timestamp"
+    oc debug node/$node_name -- bash -c "mkdir -p $tempdir && find /host/var/tmp -type f -name '*.pcap' -exec cp {} $tempdir/ \;"
     # List available pcap files
-    local pcap_files=$(oc exec -n "$debug_namespace" "$debug_pod" -- ls /host/var/tmp/*.pcap 2>/dev/null || echo "")
-    
-    if [[ -z "$pcap_files" ]]; then
-        log "No pcap files found to copy"
-        return 0
-    fi
-    
-    log "Found pcap files to copy:"
-    echo "$pcap_files"
-    
-    # Copy each pcap file
-    for pcap_file in $pcap_files; do
-        local filename=$(basename "$pcap_file")
-        local local_file="$TEMP_DIR/$filename"
+    local pcap_files=$(oc exec -n "$debug_namespace" "$debug_pod" -- ls $tempdir 2>/dev/null || echo "")
+
+    echo "🔍 Step 1: Copying .pcap files from /var/tmp to $tempdir on node $node_name ..."
+    echo "$debug_namespace" "$debug_pod":"$tempdir" 
+    oc cp -n "$debug_namespace" "$debug_pod":"$tempdir" ./pcap-dump
         
-        log "Copying $pcap_file to $local_file"
-        
-        if oc cp -n "$debug_namespace" "$debug_pod":"$pcap_file" "$local_file"; then
-            log "Successfully copied $filename"
-            
-            # Move to current directory
-            mv "$local_file" "./$filename"
-            log "pcap file available as: ./$filename"
-        else
-            error "Failed to copy $pcap_file"
-        fi
-    done
+    
 }
 
 # Function to cleanup
 cleanup() {
     log "Cleaning up temporary files..."
     rm -rf "$TEMP_DIR"
+    # Also delete pcap files from node (host)
+    if [[ -n "$node_name" ]]; then
+        log "Attempting to delete pcap files from node $node_name..."
+        oc debug node/$node_name -- bash -c 'rm -f /host/var/tmp/*.pcap' || warn "Could not delete pcap files from node $node_name"
+    fi
 }
 
 # Main function
@@ -420,30 +562,47 @@ main() {
         echo "Note: This uses the Red Hat recommended approach with 'oc debug node'"
         exit 1
     fi
-    
     local node_name="$1"
     local pod_name="$2"
     local namespace="$3"
     local command="$4"
     shift 4
     local args="$@"
-    
-    # Set up cleanup trap
     trap cleanup EXIT
-    
-    # Validate inputs
     check_prerequisites
     validate_node "$node_name"
     validate_pod "$pod_name" "$namespace"
     validate_command "$command"
-    
-    # Additional command-specific validation
+    local CAPTURE_DURATION=""
     if [[ "$command" == "tcpdump" ]]; then
         validate_tcpdump_args $args
+        # If no -i interface specified, do the two-step process
+        if ! echo "$args" | grep -E '\-i[ ]*[^ ]+' > /dev/null; then
+            run_list_interfaces_debug "$node_name" "$pod_name" "$namespace"
+            echo ""
+            echo "Please enter the interface to use for tcpdump (e.g. eth0, or type 'all' for all interfaces):"
+            read -r SELECTED_IFACE
+            if [[ -z "$SELECTED_IFACE" ]]; then
+                error "No interface selected. Exiting."
+                exit 1
+            fi
+            if [[ "$SELECTED_IFACE" == "all" ]]; then
+                args="-i any $args"
+            else
+                args="-i $SELECTED_IFACE $args"
+            fi
+        fi
+        # Prompt for duration here
+        echo ""
+        echo "Enter capture duration in seconds (default: 300 for 5 minutes):"
+        read -r CAPTURE_DURATION
+        if [[ -z "$CAPTURE_DURATION" ]]; then
+            CAPTURE_DURATION=300
+        fi
     elif [[ "$command" == "ncat" ]]; then
         validate_ncat_args $args
+        # Do NOT list interfaces or prompt for interface for ncat
     fi
-    
     log "=== OpenShift Network Debugger (Red Hat Solution) ==="
     log "Using Red Hat recommended approach for OpenShift 4.11+"
     log "Node: $node_name"
@@ -451,16 +610,11 @@ main() {
     log "Namespace: $namespace"
     log "Command: $command $args"
     log "======================================================"
-    
-    # Execute debug command
-    if execute_debug_command "$node_name" "$pod_name" "$namespace" "$command" $args; then
+    if execute_debug_command "$node_name" "$pod_name" "$namespace" "$command" $args "$CAPTURE_DURATION"; then
         log "Debug session completed successfully"
-        
-        # Try to copy pcap files if this was a tcpdump command
         if [[ "$command" == "tcpdump" ]]; then
             copy_pcap_files "$node_name" || warn "Could not copy pcap files automatically"
         fi
-        
         exit 0
     else
         error "Debug session failed"

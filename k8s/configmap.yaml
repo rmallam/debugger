@@ -3,7 +3,6 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: debugger-scripts
-  namespace: fttc-ancillary
 data:
   command-validator.sh: |
     #!/bin/bash
@@ -11,7 +10,7 @@ data:
     # Command validation script
     # Only allows tcpdump and ncat commands with specific parameters
     
-    ALLOWED_COMMANDS=("tcpdump" "ncat")
+    ALLOWED_COMMANDS=("tcpdump" "ncat" "ipconfig" "ip")
     COMMAND="$1"
     shift
     ARGS="$@"
@@ -33,10 +32,10 @@ data:
     # Check if command is allowed
     if [[ ! " ${ALLOWED_COMMANDS[@]} " =~ " ${COMMAND} " ]]; then
         audit_log "VIOLATION" "$COMMAND $ARGS"
-        echo "ERROR: Command '$COMMAND' is not allowed. Only tcpdump and ncat are permitted."
+        echo "ERROR: Command '$COMMAND' is not allowed. Only tcpdump, ncat, and read-only ip commands are permitted."
         exit 1
     fi
-    
+
     # Validate tcpdump arguments
     if [[ "$COMMAND" == "tcpdump" ]]; then
         # Basic validation - prevent dangerous options
@@ -52,7 +51,7 @@ data:
             ARGS="-c 1000 $ARGS"
         fi
     fi
-    
+
     # Validate ncat arguments  
     if [[ "$COMMAND" == "ncat" ]]; then
         # Basic validation for ncat
@@ -62,7 +61,24 @@ data:
             exit 1
         fi
     fi
-    
+
+    # Validate ip command arguments (allow only read-only)
+    if [[ "$COMMAND" == "ip" ]]; then
+        # Only allow read-only subcommands: 'a', 'addr', 'link', 'route', 'r', 'neigh', 'n', 'rule', 'show', 'list', 'l', 'help', 'monitor'
+        readonly_ip_regex='^(a|addr|link|route|r|neigh|n|rule|show|list|l|help|monitor)( |$)'
+        if ! [[ "$ARGS" =~ $readonly_ip_regex ]]; then
+            audit_log "VIOLATION" "$COMMAND $ARGS"
+            echo "ERROR: Only read-only ip commands are allowed (e.g., ip a, ip route, ip link, ip neigh, ip rule, ip show, ip list, ip help, ip monitor)"
+            exit 1
+        fi
+        # Disallow any potentially dangerous options
+        if echo "$ARGS" | grep -E '(add|del|delete|flush|change|replace|append|prepend|dev|set|up|down|exec|>|>>|\|)' > /dev/null; then
+            audit_log "VIOLATION" "$COMMAND $ARGS"
+            echo "ERROR: Only read-only ip commands are allowed. Modification commands are not permitted."
+            exit 1
+        fi
+    fi
+
     # Log successful command execution
     audit_log "EXECUTE" "$COMMAND $ARGS"
     
