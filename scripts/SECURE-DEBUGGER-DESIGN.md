@@ -8,19 +8,24 @@ This solution enables application teams (who are only namespace admins for their
 
 ## Architecture Diagram
 
+![Architecture Diagram](debugger-architecture.png)
+
+<details>
+<summary>Click to view/copy Mermaid diagram source</summary>
+
 ```mermaid
 flowchart TD
-    subgraph Application Namespace (app1)
-      User1[App Team User<br/>(namespace admin)]
+    subgraph ApplicationNamespace
+        User1["App Team User (namespace admin)"]
     end
 
-    subgraph Debugger Namespace
-      Script[run-debugger-job.sh]
-      Job[Privileged Job<br/>(support-tools image)]
-      CopyPod[Copy Pod]
-      Gatekeeper[Gatekeeper<br/>Policies]
-      RBAC[RBAC<br/>Minimal Access]
-      SCC[SCC<br/>Privileged for debugger-sa]
+    subgraph DebuggerNamespace
+        Script["run-debugger-job.sh"]
+        Job["Privileged Job (support-tools image)"]
+        CopyPod["Copy Pod"]
+        Gatekeeper["Gatekeeper Policies"]
+        RBAC["RBAC Minimal Access"]
+        SCC["SCC Privileged for debugger-sa"]
     end
 
     User1 -- runs --> Script
@@ -36,6 +41,8 @@ flowchart TD
     CopyPod -- checked by --> RBAC
     CopyPod -- checked by --> SCC
 ```
+
+</details>
 
 ---
 
