@@ -65,7 +65,44 @@ metadata:
 subjects:
 - kind: ServiceAccount
   name: debugger-sa
-  namespace: fttc-ancillary
+  namespace: degugger
+roleRef:
+  kind: ClusterRole
+  name: debugger-node-access
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: debugger-get-namespace
+  annotations:
+    description: "Allow debugger-sa to get namespaces for debug job workflow"
+rules:
+- apiGroups: [""]
+  resources: ["namespaces"]
+  verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: debugger-sa-get-namespace
+subjects:
+- kind: ServiceAccount
+  name: debugger-sa
+  namespace: debugger
+roleRef:
+  kind: ClusterRole
+  name: debugger-get-namespace
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: debugger-node-access-binding-debugger
+subjects:
+- kind: ServiceAccount
+  name: debugger-sa
+  namespace: debugger
 roleRef:
   kind: ClusterRole
   name: debugger-node-access

@@ -1,0 +1,20 @@
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sAllowedDebugCommands
+metadata:
+  name: only-execute-command-sh-debug
+spec:
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: [Pod]
+      - apiGroups: ["batch"]
+        kinds: [Job]
+    namespaces:
+      - debugger
+  parameters:
+    allowedCommand: "/opt/scripts/execute-command.sh"
+    allowedArgs:
+      - "tcpdump"
+      - "ncat"
+      - "ip"
+      - "ifconfig"

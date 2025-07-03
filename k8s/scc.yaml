@@ -28,7 +28,7 @@ seLinuxContext:
 supplementalGroups:
   type: RunAsAny
 users:
-- system:serviceaccount:fttc-ancillary:debugger-sa
+- system:serviceaccount:debugger:debugger-sa
 volumes:
 - configMap
 - downwardAPI

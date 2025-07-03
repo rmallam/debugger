@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: execute-command-job
+  namespace: debugger
+spec:
+  serviceAccountName: app1-admin
+  restartPolicy: Never
+  containers:
+  - name: execute-command
+    image: registry.redhat.io/ubi8/ubi:latest
+    command: ["/opt/scripts/execute-command.sh"]
+    args: ["<node-name>", "-", "-", "tcpdump", "-i", "any", "-c", "10"]
+    volumeMounts:
+    - name: scripts
+      mountPath: /opt/scripts
+      readOnly: true
+    - name: host
+      mountPath: /host
+      # Add other mounts as needed for your script
+  volumes:
+  - name: scripts
+    configMap:
+      name: debugger-scripts
+      defaultMode: 0755
+  - name: host
+    hostPath:
+      path: /
+      type: Directory

@@ -1,0 +1,46 @@
+apiVersion: templates.gatekeeper.sh/v1beta1
+kind: ConstraintTemplate
+metadata:
+  name: k8salloweddebugcommands
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sAllowedDebugCommands
+      validation:
+        openAPIV3Schema:
+          properties:
+            allowedCommand:
+              type: string
+            allowedArgs:
+              type: array
+              items:
+                type: string
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8salloweddebugcommands
+        violation[{
+          "msg": msg,
+          "details": {"container": container.name}
+        }] {
+          container := input.review.object.spec.containers[_]
+          not allowed_command(container)
+          msg := sprintf("container '%v' must use command: %v", [container.name, input.parameters.allowedCommand])
+        }
+        violation[{
+          "msg": msg,
+          "details": {"container": container.name}
+        }] {
+          container := input.review.object.spec.containers[_]
+          allowed_command(container)
+          not allowed_args(container)
+          msg := sprintf("container '%v' must use one of allowed args: %v", [container.name, input.parameters.allowedArgs])
+        }
+        allowed_command(container) {
+          container.command[0] == input.parameters.allowedCommand
+        }
+        allowed_args(container) {
+          count(container.args) > 0
+          input.parameters.allowedArgs[_] == container.args[0]
+        }

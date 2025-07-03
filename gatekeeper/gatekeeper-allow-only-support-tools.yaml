@@ -1,0 +1,18 @@
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sAllowedRepos
+metadata:
+  name: only-support-tools-image
+spec:
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: [Pod]
+      - apiGroups: ["batch"]
+        kinds: [Job]
+    namespaces:
+      - debugger
+  parameters:
+    repos:
+      - "registry.redhat.io/rhel8/support-tools:8.10-15.1749683615"
+    # Only allow this exact image, not a prefix
+    exactMatch: true
