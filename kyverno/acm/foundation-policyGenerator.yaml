@@ -1,0 +1,21 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: foundation-policies
+policyDefaults:
+  namespace: policies
+  placement:
+    labelSelector:
+      environment: prod
+  remediationAction: enforce
+policies:
+  # First policy ensures the namespace exists
+  - name: ensure-policies-namespace-policy
+    manifests:
+      - path: policies-namespace-policy.yaml
+    remediationAction: enforce
+    
+  # Your existing SCC policy - will be applied after namespace is created
+  - name: nsp-scc-policy
+    manifests:
+      - path: policy.yaml

@@ -1,0 +1,179 @@
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sAllowedDebugCommands
+metadata:
+  name: comprehensive-debug-commands
+spec:
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: [Pod]
+      - apiGroups: ["batch"]
+        kinds: [Job]
+    namespaces:
+      - debugger
+  parameters:
+    allowedCommand: "/opt/scripts/execute-command.sh"
+    allowedArgs:
+      # Base commands
+      - "tcpdump"
+      - "ncat"
+      - "ip"
+      - "ifconfig"
+      
+      # tcpdump specific arguments
+      - "-c"          # count
+      - "-i"          # interface
+      - "-w"          # write to file
+      - "-n"          # don't resolve hosts
+      - "-nn"         # don't resolve hosts or ports
+      - "-v"          # verbose
+      - "-vv"         # more verbose
+      - "-vvv"        # even more verbose
+      - "-s"          # snaplen
+      - "-A"          # print packets in ASCII
+      - "-X"          # print packets in hex and ASCII
+      - "-q"          # quiet output
+      - "-t"          # don't print timestamps
+      - "-tt"         # print unformatted timestamps
+      - "-ttt"        # print deltas
+      - "-tttt"       # print timestamps with date
+      - "-e"          # print link-level headers
+      - "-S"          # print absolute sequence numbers
+      - "-x"          # print packets in hex
+      - "-xx"         # print packets in hex including link level
+      
+      # Interface names
+      - "any"
+      - "eth0"
+      - "eth1" 
+      - "lo"
+      - "veth0"
+      - "br0"
+      
+      # Common count values for tcpdump -c
+      - "1"
+      - "5"
+      - "10"
+      - "20"
+      - "50"
+      - "100"
+      - "200"
+      - "500"
+      - "1000"
+      - "2000"
+      - "5000"
+      
+      # Common snaplen values for tcpdump -s
+      - "0"           # capture entire packet
+      - "68"          # default snaplen
+      - "96"
+      - "128"
+      - "256"
+      - "512"
+      - "1024"
+      - "1500"        # ethernet MTU
+      - "65535"       # max snaplen
+      
+      # Output file paths (adjust based on your mounted paths)
+      - "/host/var/tmp/capture.pcap"
+      - "/host/var/tmp/debug.pcap"
+      - "/host/var/tmp/network.pcap"
+      - "/host/var/tmp/troubleshoot.pcap"
+      
+      # tcpdump filter expressions
+      - "host"
+      - "port"
+      - "tcp"
+      - "udp"
+      - "icmp"
+      - "arp"
+      - "and"
+      - "or"
+      - "not"
+      - "src"
+      - "dst"
+      
+      # ncat specific arguments
+      - "-l"          # listen mode
+      - "-p"          # port specification
+      - "-u"          # UDP mode
+      - "-v"          # verbose
+      - "-z"          # zero-I/O mode (scanning)
+      - "-w"          # timeout
+      - "-n"          # no DNS resolution
+      - "-4"          # IPv4 only
+      - "-6"          # IPv6 only
+      - "-k"          # keep listening
+      
+      # Common ports for ncat
+      - "22"          # SSH
+      - "23"          # Telnet
+      - "53"          # DNS
+      - "80"          # HTTP
+      - "443"         # HTTPS
+      - "8080"        # Alt HTTP
+      - "8443"        # Alt HTTPS
+      - "9090"        # Common app port
+      - "3000"        # Development port
+      - "5000"        # Development port
+      - "6443"        # Kubernetes API
+      
+      # Common hosts for ncat
+      - "localhost"
+      - "127.0.0.1"
+      - "0.0.0.0"
+      - "::1"
+      
+      # Timeout values for ncat -w
+      - "1"
+      - "2"
+      - "5"
+      - "10"
+      - "30"
+      - "60"
+      
+      # ip command subcommands
+      - "addr"
+      - "address"
+      - "route"
+      - "link"
+      - "show"
+      - "list"
+      - "a"           # shorthand for addr
+      - "r"           # shorthand for route
+      - "l"           # shorthand for link
+      - "help"
+      - "-4"          # IPv4
+      - "-6"          # IPv6
+      - "-s"          # statistics
+      - "-d"          # details
+      - "-o"          # oneline
+      
+      # ifconfig arguments
+      - "-a"          # show all interfaces
+      - "-s"          # short listing
+      - "up"
+      - "down"
+      
+      # Protocol and filter keywords
+      - "icmp6"
+      - "ip6"
+      - "tcp6"
+      - "udp6"
+      - "portrange"
+      - "less"
+      - "greater"
+      - "broadcast"
+      - "multicast"
+      
+      # Common IP addresses (for testing connectivity)
+      - "8.8.8.8"     # Google DNS
+      - "1.1.1.1"     # Cloudflare DNS
+      - "169.254.169.254"  # AWS metadata
+      
+    # Optional: Define validation rules
+    validationRules:
+      - "tcpdump arguments must include -c with a numeric value when capturing to prevent infinite capture"
+      - "ncat in listen mode (-l) must specify a port with -p"
+      - "Output files must be in /host/var/tmp/ directory"
+      - "Interface names must match known network interface patterns"

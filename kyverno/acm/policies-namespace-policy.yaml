@@ -1,0 +1,35 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: ensure-policies-namespace
+  annotations:
+    policies.kyverno.io/title: Ensure Policies Namespace
+    policies.kyverno.io/category: Namespace Management
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/subject: Namespace
+    policies.kyverno.io/description: >-
+      This policy ensures that the 'policies' namespace always exists
+      on the cluster. It is used as a foundation for deploying all ACM policies.
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: ensure-policies-namespace-exists
+      match:
+        any:
+        - resources:
+            kinds:
+              - Namespace
+      generate:
+        kind: Namespace
+        name: policies
+        namespace: ""
+        synchronize: true
+        data:
+          metadata:
+            name: policies
+            labels:
+              managed-by: acm-policy
+            annotations:
+              openshift.io/description: "Namespace for ACM policies"
+              openshift.io/display-name: "ACM Policies"

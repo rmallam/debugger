@@ -1,0 +1,76 @@
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sAllowedDebugCommands
+metadata:
+  name: flexible-debug-commands-regex
+spec:
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: [Pod]
+      - apiGroups: ["batch"]
+        kinds: [Job]
+    namespaces:
+      - debugger
+  parameters:
+    allowedCommand: "/opt/scripts/execute-command.sh"
+    # Use regex patterns for more flexible argument matching
+    allowedArgPatterns:
+      # tcpdump command and its common arguments
+      - "^tcpdump$"
+      - "^-c$"                    # packet count flag
+      - "^[0-9]+$"               # numeric values (count, port numbers, etc.)
+      - "^-i$"                   # interface flag
+      - "^(any|eth[0-9]+|lo|veth.*|br-.*)$"  # interface names
+      - "^-w$"                   # write to file flag
+      - "^/host/var/tmp/.*\\.pcap$"  # output file paths
+      - "^-n+$"                  # no name resolution (-n, -nn)
+      - "^-v+$"                  # verbose (-v, -vv, -vvv)
+      - "^-s$"                   # snaplen flag
+      - "^-[AX]$"                # ASCII/hex output
+      - "^(host|port|tcp|udp|icmp)$"  # filter keywords
+      
+      # ncat command and arguments
+      - "^ncat$"
+      - "^-[lupvzw]$"            # common ncat flags
+      - "^(localhost|127\\.0\\.0\\.1|0\\.0\\.0\\.0)$"  # allowed hosts
+      - "^(80|443|8080|9090|22|53|[1-9][0-9]{3})$"     # common ports
+      
+      # ip command and arguments
+      - "^ip$"
+      - "^(addr|address|route|link|show|list|a|r|l)$"
+      
+      # ifconfig command
+      - "^ifconfig$"
+      - "^(eth[0-9]+|lo|veth.*|br-.*)$"  # interface names for ifconfig
+    
+    # Alternative: Define command-specific argument sets
+    commandArgSets:
+      tcpdump:
+        - "-c"
+        - "-i"
+        - "-w"
+        - "-n"
+        - "-nn"
+        - "-v"
+        - "-vv"
+        - "-s"
+        - "any"
+        - "eth0"
+        - "/host/var/tmp/"
+      ncat:
+        - "-l"
+        - "-p"
+        - "-u"
+        - "-v"
+        - "-z"
+        - "localhost"
+        - "127.0.0.1"
+      ip:
+        - "addr"
+        - "route"
+        - "link"
+        - "show"
+        - "list"
+      ifconfig:
+        - "eth0"
+        - "lo"

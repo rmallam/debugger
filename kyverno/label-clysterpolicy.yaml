@@ -1,0 +1,21 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-namespace-label
+spec:
+  validationFailureAction: Enforce   # enforce = block, audit = just report
+  background: false                  # only validate admission requests, not existing resources
+  rules:
+    - name: check-required-namespace-label
+      match:
+        any:
+          - resources:
+              kinds:
+                - Namespace
+      validate:
+        message: "Namespace must have the label `team: devops`."
+        pattern:
+          metadata:
+            labels:
+              team: "?*"
+

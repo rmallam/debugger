@@ -1,0 +1,56 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: app1-admin
+  namespace: app1
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: debugger-role-for-appteams
+  namespace: debugger
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["create", "get", "list", "watch", "delete"]
+- apiGroups: [""]
+  resources: ["pods/log"]
+  verbs: ["get"]
+- apiGroups: [""]
+  resources: ["pods/exec"]
+  verbs: ["create"]
+- apiGroups: ["batch"]
+  resources: ["jobs"]
+  verbs: ["get", "list", "create", "delete", "watch"]
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: debugger-role-for-appteams-binding
+  namespace: debugger
+subjects:
+- kind: ServiceAccount
+  name: app1-admin
+  namespace: app1
+roleRef:
+  kind: Role
+  name: debugger-role-for-appteams
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: app1-debugger-role-binding
+  namespace: app1
+subjects:
+- kind: Group
+  name: ad-test
+  apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: Role
+  name: debugger-role-for-appteams
+  apiGroup: rbac.authorization.k8s.io

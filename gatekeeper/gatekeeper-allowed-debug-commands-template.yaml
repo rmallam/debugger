@@ -1,0 +1,239 @@
+apiVersion: templates.gatekeeper.sh/v1beta1
+kind: ConstraintTemplate
+metadata:
+  name: k8salloweddebugcommands
+  annotations:
+    description: "Controls which debug commands and arguments are allowed in containers"
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sAllowedDebugCommands
+      validation:
+        openAPIV3Schema:
+          type: object
+          properties:
+            allowedCommand:
+              type: string
+              description: "The allowed command to execute"
+            allowedCommands:
+              type: array
+              description: "List of allowed debug commands"
+              items:
+                type: string
+            allowedFlags:
+              type: array
+              description: "List of allowed command flags"
+              items:
+                type: string
+            allowedInterfaces:
+              type: array
+              description: "List of allowed network interfaces"
+              items:
+                type: string
+            allowedPorts:
+              type: array
+              description: "List of allowed ports or port ranges"
+              items:
+                type: string
+            allowedFilePaths:
+              type: array
+              description: "List of allowed file path prefixes"
+              items:
+                type: string
+            regexPatterns:
+              type: object
+              description: "Regex patterns for flexible validation"
+              properties:
+                numericValues:
+                  type: string
+                portRange:
+                  type: string
+                ipAddress:
+                  type: string
+                interface:
+                  type: string
+                readOnlyFilePath:
+                  type: string
+                hostnameOrDomain:
+                  type: string
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8salloweddebugcommands
+        
+        # Main violation rules
+        violation[{
+          "msg": msg,
+          "details": {"container": container.name, "command": container.command}
+        }] {
+          container := input.review.object.spec.containers[_]
+          not allowed_command(container)
+          msg := sprintf("container '%v' must use allowed command. Got: %v", [container.name, container.command])
+        }
+        
+        violation[{
+          "msg": msg,
+          "details": {"container": container.name, "args": container.args}
+        }] {
+          container := input.review.object.spec.containers[_]
+          allowed_command(container)
+          not all_args_allowed(container)
+          msg := sprintf("container '%v' contains disallowed arguments: %v", [container.name, container.args])
+        }
+        
+        # Check if command is allowed
+        allowed_command(container) {
+          # Check if it's the wrapper script
+          container.command[0] == input.parameters.allowedCommand
+        }
+        
+        allowed_command(container) {
+          # Or check if it's one of the allowed debug commands directly
+          count(input.parameters.allowedCommands) > 0
+          input.parameters.allowedCommands[_] == container.command[0]
+        }
+        
+        # Check if all arguments are allowed
+        all_args_allowed(container) {
+          count(container.args) == 0  # No args is always allowed
+        }
+        
+        all_args_allowed(container) {
+          count(container.args) > 0
+          count([arg | arg := container.args[_]; not arg_allowed(arg)]) == 0
+        }
+        
+        # Check individual argument
+        arg_allowed(arg) {
+          # Direct match with allowed commands
+          input.parameters.allowedCommands[_] == arg
+        }
+        
+        arg_allowed(arg) {
+          # Direct match with allowed flags
+          input.parameters.allowedFlags[_] == arg
+        }
+        
+        arg_allowed(arg) {
+          # Direct match with allowed interfaces
+          input.parameters.allowedInterfaces[_] == arg
+        }
+        
+        arg_allowed(arg) {
+          # Interface prefix match (for br-, veth, etc.)
+          interface_prefix := input.parameters.allowedInterfaces[_]
+          endswith(interface_prefix, "-")
+          startswith(arg, interface_prefix)
+        }
+        
+        arg_allowed(arg) {
+          # Direct match with allowed ports
+          input.parameters.allowedPorts[_] == arg
+        }
+        
+        arg_allowed(arg) {
+          # File path prefix match
+          path_prefix := input.parameters.allowedFilePaths[_]
+          startswith(arg, path_prefix)
+        }
+        
+        arg_allowed(arg) {
+          # Numeric value validation
+          regex.match(input.parameters.regexPatterns.numericValues, arg)
+        }
+        
+        arg_allowed(arg) {
+          # Port range validation
+          regex.match(input.parameters.regexPatterns.portRange, arg)
+        }
+        
+        arg_allowed(arg) {
+          # IP address validation
+          regex.match(input.parameters.regexPatterns.ipAddress, arg)
+        }
+        
+        arg_allowed(arg) {
+          # Interface validation
+          regex.match(input.parameters.regexPatterns.interface, arg)
+        }
+        
+        arg_allowed(arg) {
+          # File path validation (read-only paths only)
+          regex.match(input.parameters.regexPatterns.readOnlyFilePath, arg)
+        }
+        
+        arg_allowed(arg) {
+          # Hostname or domain validation
+          regex.match(input.parameters.regexPatterns.hostnameOrDomain, arg)
+        }
+        
+        arg_allowed(arg) {
+          # Common subcommands (read-only)
+          arg == "addr"
+        }
+        
+        arg_allowed(arg) {
+          arg == "route"
+        }
+        
+        arg_allowed(arg) {
+          arg == "link"
+        }
+        
+        arg_allowed(arg) {
+          arg == "show"
+        }
+        
+        arg_allowed(arg) {
+          arg == "list"
+        }
+        
+        arg_allowed(arg) {
+          arg == "status"
+        }
+        
+        # Common protocol and filter expressions for tcpdump
+        arg_allowed(arg) {
+          arg == "tcp"
+        }
+        
+        arg_allowed(arg) {
+          arg == "udp"
+        }
+        
+        arg_allowed(arg) {
+          arg == "icmp"
+        }
+        
+        arg_allowed(arg) {
+          arg == "arp"
+        }
+        
+        arg_allowed(arg) {
+          arg == "host"
+        }
+        
+        arg_allowed(arg) {
+          arg == "port"
+        }
+        
+        arg_allowed(arg) {
+          arg == "src"
+        }
+        
+        arg_allowed(arg) {
+          arg == "dst"
+        }
+        
+        arg_allowed(arg) {
+          arg == "and"
+        }
+        
+        arg_allowed(arg) {
+          arg == "or"
+        }
+        
+        arg_allowed(arg) {
+          arg == "not"
+        }

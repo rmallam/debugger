@@ -1,0 +1,164 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: restrict-nsp-scc
+  annotations:
+    policies.kyverno.io/title: Restrict NSP SCC Usage
+    policies.kyverno.io/category: Security, PSP
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/description: >-
+      This policy restricts the use of NSP SecurityContextConstraint (SCC)
+      to only be allowed for nsp-deployment in the NSP namespace using the
+      docker.io/nsp image. The deployment can run without using this SCC,
+      but if the NSP SCC is specified, it can only be used by this specific
+      deployment. It helps prevent privilege escalation by ensuring
+      only authorized workloads can use the NSP SCC.
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: validate-scc-annotations
+      match:
+        any:
+        - resources:
+            kinds:
+              - Pod
+      preconditions:
+        all:
+        # Only apply this rule if the pod has the NSP SCC annotation
+        - key: "{{request.object.metadata.annotations.\"openshift.io/scc\"}}"
+          operator: Equals
+          value: "NSP"
+      validate:
+        message: "The NSP SCC can only be used by the nsp-deployment in the NSP namespace using the docker.io/nsp image."
+        deny:
+          conditions:
+            any:
+            # Check if NOT in NSP namespace
+            - key: "{{request.object.metadata.namespace}}"
+              operator: NotEquals
+              value: "NSP"
+            # Checks if NOT the authorized deployment
+            - key: "{{ request.object.metadata.ownerReferences[0].name }}"
+              operator: NotEquals
+              value: "nsp-deployment"
+            # Checks if NOT using the authorized image
+            - key: "{{ images.contains(@, 'docker.io/nsp:*') }}"
+              operator: Equals
+              value: false
+
+    # Add a second rule for handling pods created directly (not via deployment)
+    - name: validate-direct-pod-scc
+      match:
+        any:
+        - resources:
+            kinds:
+              - Pod
+      preconditions:
+        all:
+        # Only apply if this is a direct pod (not owned by a deployment/job)
+        - key: "{{ request.object.metadata.ownerReferences[0] }}"
+          operator: Equals
+          value: null
+        # Only apply if using the NSP SCC
+        - key: "{{request.object.metadata.annotations.\"openshift.io/scc\"}}"
+          operator: Equals
+          value: "NSP"
+      validate:
+        message: "Direct pods cannot use the NSP SCC. The NSP SCC is restricted to nsp-deployment in NSP namespace only."
+        deny:
+          conditions:
+            any:
+            # Always deny direct pods from using NSP SCC
+            - key: "true"
+              operator: Equals
+              value: true
+
+---
+# ConfigMap to explain policy usage and customization
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: scc-restriction-policy-readme
+  namespace: kyverno
+data:
+  README.md: |
+    # NSP SCC Restriction Policy
+    
+    ## Overview
+    
+    This Kyverno policy restricts the use of NSP SecurityContextConstraint (SCC) to only 
+    be allowed for the nsp-deployment in NSP namespace using the docker.io/nsp image.
+    The nsp-deployment can run without this SCC if needed, but if the NSP SCC is specified,
+    it can only be used by this specific deployment.
+    
+    ## Policy Details
+    
+    This policy enforces the following restrictions:
+    
+    1. **Optional SCC Usage**: The nsp-deployment can run without the NSP SCC
+    2. **Exclusive SCC Usage**: If the NSP SCC is used, it can ONLY be used by:
+       - The deployment named "nsp-deployment"
+       - In the NSP namespace only
+       - With the docker.io/nsp image only
+    3. **Direct Pod Restriction**: Direct pods (not created by deployments) cannot use the NSP SCC at all
+    
+    ## Testing
+    
+    To test this policy:
+    
+    1. Apply the policy:
+       ```
+       kubectl apply -f policygen-scc-restriction.yaml
+       ```
+       
+    2. Create a pod with NSP SCC but in wrong namespace:
+       ```
+       kubectl run test-pod -n default --image=docker.io/nsp:latest --annotations="openshift.io/scc=NSP"
+       ```
+       This should be blocked.
+       
+    3. Create a pod with NSP SCC but wrong image:
+       ```
+       kubectl run test-pod -n NSP --image=nginx:latest --annotations="openshift.io/scc=NSP"
+       ```
+       This should be blocked.
+       
+    4. Create a deployment with correct namespace, name and image:
+       ```
+       kubectl apply -f - <<EOF
+       apiVersion: apps/v1
+       kind: Deployment
+       metadata:
+         name: nsp-deployment
+         namespace: NSP
+       spec:
+         replicas: 1
+         selector:
+           matchLabels:
+             app: nsp
+         template:
+           metadata:
+             labels:
+               app: nsp
+             annotations:
+               openshift.io/scc: NSP
+           spec:
+             containers:
+             - name: nsp
+               image: docker.io/nsp:latest
+       EOF
+       ```
+       This should be allowed.
+    
+    ## Troubleshooting
+    
+    If legitimate workloads are being blocked, check:
+    
+    1. Policy logs: `kubectl logs -n kyverno -l app.kubernetes.io/name=kyverno`
+    2. Verify the pod or deployment meets all requirements:
+       - Using the NSP SCC
+       - Deployed in the NSP namespace
+       - Named "nsp-deployment" (for deployments)
+       - Using the docker.io/nsp image

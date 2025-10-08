@@ -1,0 +1,196 @@
+# Examples of read-only debug commands that would be allowed by the Gatekeeper policy
+
+---
+# Example 1: tcpdump with packet count (read-only, no file output)
+apiVersion: v1
+kind: Pod
+metadata:
+  name: debug-tcpdump-count
+  namespace: debugger
+spec:
+  containers:
+  - name: debug
+    image: registry.redhat.io/ubi8/ubi:latest
+    command: ["/opt/scripts/execute-command.sh"]
+    args: ["tcpdump", "-c", "100", "-i", "any", "-nn", "-v"]
+    # This is allowed: tcpdump -c 100 -i any -nn -v (output to stdout only)
+
+---
+# Example 2: tcpdump with protocol filter (read-only)
+apiVersion: v1
+kind: Pod
+metadata:
+  name: debug-tcpdump-tcp
+  namespace: debugger
+spec:
+  containers:
+  - name: debug
+    image: registry.redhat.io/ubi8/ubi:latest
+    command: ["/opt/scripts/execute-command.sh"]
+    args: ["tcpdump", "-c", "50", "-i", "eth0", "tcp", "port", "80"]
+    # This is allowed: tcpdump -c 50 -i eth0 tcp port 80
+
+---
+# Example 3: tcpdump with host filter (read-only)
+apiVersion: v1
+kind: Pod
+metadata:
+  name: debug-tcpdump-host
+  namespace: debugger
+spec:
+  containers:
+  - name: debug
+    image: registry.redhat.io/ubi8/ubi:latest
+    command: ["/opt/scripts/execute-command.sh"]
+    args: ["tcpdump", "-c", "20", "-nn", "host", "192.168.1.100"]
+    # This is allowed: tcpdump -c 20 -nn host 192.168.1.100
+
+---
+# Example 4: ping with packet count
+apiVersion: v1
+kind: Pod
+metadata:
+  name: debug-ping-count
+  namespace: debugger
+spec:
+  containers:
+  - name: debug
+    image: registry.redhat.io/ubi8/ubi:latest
+    command: ["/opt/scripts/execute-command.sh"]
+    args: ["ping", "-c", "5", "-q", "google.com"]
+    # This is allowed: ping -c 5 -q google.com
+
+---
+# Example 2: DNS lookup with dig
+apiVersion: v1
+kind: Pod
+metadata:
+  name: debug-dig-lookup
+  namespace: debugger
+spec:
+  containers:
+  - name: debug
+    image: registry.redhat.io/ubi8/ubi:latest
+    command: ["/opt/scripts/execute-command.sh"]
+    args: ["dig", "+short", "kubernetes.default.svc.cluster.local"]
+    # This is allowed: dig +short kubernetes.default.svc.cluster.local
+
+---
+# Example 3: Check network connections
+apiVersion: v1
+kind: Pod
+metadata:
+  name: debug-netstat
+  namespace: debugger
+spec:
+  containers:
+  - name: debug
+    image: registry.redhat.io/ubi8/ubi:latest
+    command: ["/opt/scripts/execute-command.sh"]
+    args: ["netstat", "-tulpn"]
+    # This is allowed: netstat -tulpn
+
+---
+# Example 4: List processes
+apiVersion: v1
+kind: Pod
+metadata:
+  name: debug-ps
+  namespace: debugger
+spec:
+  containers:
+  - name: debug
+    image: registry.redhat.io/ubi8/ubi:latest
+    command: ["/opt/scripts/execute-command.sh"]
+    args: ["ps", "aux"]
+    # This is allowed: ps aux
+
+---
+# Example 5: Check disk usage
+apiVersion: v1
+kind: Pod
+metadata:
+  name: debug-df
+  namespace: debugger
+spec:
+  containers:
+  - name: debug
+    image: registry.redhat.io/ubi8/ubi:latest
+    command: ["/opt/scripts/execute-command.sh"]
+    args: ["df", "-h"]
+    # This is allowed: df -h
+
+---
+# Example 6: View log files (read-only)
+apiVersion: v1
+kind: Pod
+metadata:
+  name: debug-cat-logs
+  namespace: debugger
+spec:
+  containers:
+  - name: debug
+    image: registry.redhat.io/ubi8/ubi:latest
+    command: ["/opt/scripts/execute-command.sh"]
+    args: ["cat", "/var/log/messages"]
+    # This is allowed: cat /var/log/messages
+
+---
+# Example 7: Check memory usage
+apiVersion: v1
+kind: Pod
+metadata:
+  name: debug-free
+  namespace: debugger
+spec:
+  containers:
+  - name: debug
+    image: registry.redhat.io/ubi8/ubi:latest
+    command: ["/opt/scripts/execute-command.sh"]
+    args: ["free", "-h"]
+    # This is allowed: free -h
+
+---
+# Example 8: List open files
+apiVersion: v1
+kind: Pod
+metadata:
+  name: debug-lsof
+  namespace: debugger
+spec:
+  containers:
+  - name: debug
+    image: registry.redhat.io/ubi8/ubi:latest
+    command: ["/opt/scripts/execute-command.sh"]
+    args: ["lsof", "-i", ":80"]
+    # This is allowed: lsof -i :80
+
+---
+# Example 9: Check system information
+apiVersion: v1
+kind: Pod
+metadata:
+  name: debug-uname
+  namespace: debugger
+spec:
+  containers:
+  - name: debug
+    image: registry.redhat.io/ubi8/ubi:latest
+    command: ["/opt/scripts/execute-command.sh"]
+    args: ["uname", "-a"]
+    # This is allowed: uname -a
+
+---
+# Example 10: Multiple read-only commands in sequence
+apiVersion: v1
+kind: Pod
+metadata:
+  name: debug-multi-readonly
+  namespace: debugger
+spec:
+  containers:
+  - name: debug
+    image: registry.redhat.io/ubi8/ubi:latest
+    command: ["/bin/bash"]
+    args: ["-c", "/opt/scripts/execute-command.sh ps aux && /opt/scripts/execute-command.sh netstat -tulpn && /opt/scripts/execute-command.sh free -h"]
+    # This allows running multiple read-only commands in sequence

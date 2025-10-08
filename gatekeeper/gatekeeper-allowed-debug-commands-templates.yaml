@@ -1,0 +1,73 @@
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sAllowedDebugCommands
+metadata:
+  name: template-based-debug-commands
+spec:
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: [Pod]
+      - apiGroups: ["batch"]
+        kinds: [Job]
+    namespaces:
+      - debugger
+  parameters:
+    allowedCommand: "/opt/scripts/execute-command.sh"
+    # Define allowed command templates
+    allowedCommandTemplates:
+      # tcpdump templates
+      - "tcpdump -c {count} -i {interface}"
+      - "tcpdump -c {count} -i {interface} -w {output_file}"
+      - "tcpdump -i {interface} -n -v"
+      - "tcpdump -i any -c {count}"
+      - "tcpdump -i any -n -nn"
+      - "tcpdump -c {count} -i any -w /host/var/tmp/{filename}.pcap"
+      
+      # ncat templates  
+      - "ncat -l -p {port}"
+      - "ncat -v {host} {port}"
+      - "ncat -u -v {host} {port}"
+      - "ncat -z -v {host} {port}"
+      
+      # ip command templates
+      - "ip addr show"
+      - "ip addr show {interface}"
+      - "ip route show"
+      - "ip link show"
+      
+      # ifconfig templates
+      - "ifconfig"
+      - "ifconfig {interface}"
+    
+    # Define allowed values for template variables
+    templateVariables:
+      count:
+        - "10"
+        - "50"
+        - "100"
+        - "500"
+        - "1000"
+      interface:
+        - "any"
+        - "eth0"
+        - "eth1"
+        - "lo"
+      output_file:
+        - "/host/var/tmp/capture.pcap"
+        - "/host/var/tmp/debug.pcap"
+        - "/host/var/tmp/network.pcap"
+      filename:
+        - "capture"
+        - "debug"
+        - "network"
+        - "troubleshoot"
+      port:
+        - "22"
+        - "53"
+        - "80"
+        - "443"
+        - "8080"
+        - "9090"
+      host:
+        - "localhost"
+        - "127.0.0.1"

@@ -1,0 +1,136 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pushgateway
+  namespace: debugger
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pushgateway
+  template:
+    metadata:
+      labels:
+        app: pushgateway
+    spec:
+      containers:
+      - name: pushgateway
+        image: prom/pushgateway:latest
+        ports:
+        - containerPort: 9091
+        resources:
+          requests:
+            cpu: 10m
+            memory: 32Mi
+          limits:
+            cpu: 100m
+            memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+     app: pushgateway
+  name: pushgateway
+  namespace: debugger
+spec:
+  selector:
+    app: pushgateway
+  ports:
+    - name: metrics
+      protocol: TCP
+      port: 9091
+      targetPort: 9091
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: prometheus-debugger-monitor
+  namespace: debugger
+spec:
+  endpoints:
+  - interval: 30s
+    port: metrics
+    scheme: http
+  selector:
+    matchLabels:
+      app: pushgateway
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: debugger-alerts
+  namespace: debugger
+spec:
+  groups:
+  - name: debugger.rules
+    rules:
+    # Job Started Alert
+    - alert: DebuggerJobCreated
+      annotations:
+        description: User {{$labels.user}} started a secure debugger job {{$labels.job_name}} with command {{$labels.command}} on node {{$labels.node}} in debugger namespace
+        summary: Debugger Job Created
+      expr: debugger_job_started_total > 0
+      for: 0m
+      labels:
+        severity: new
+    
+    # Job Completed Successfully Alert
+    - alert: DebuggerJobCompleted
+      annotations:
+        description: User {{$labels.user}} successfully completed debugger job {{$labels.job_name}} with command {{$labels.command}} on node {{$labels.node}}. Duration {{$labels.duration}}s
+        summary: Debugger Job Completed Successfully
+      expr: debugger_job_completed_total > 0
+      for: 0m
+      labels:
+        severity: new
+    
+    # Job Failed Alert
+    - alert: DebuggerJobFailed
+      annotations:
+        description: User {{$labels.user}} had a debugger job {{$labels.job_name}} FAIL with command {{$labels.command}} on node {{$labels.node}}
+        summary: Debugger Job Failed
+      expr: debugger_job_failed_total > 0
+      for: 0m
+      labels:
+        severity: new
+    
+    # Job Status Alert (more comprehensive)
+    - alert: DebuggerJobStatus
+      annotations:
+        description: 'Debugger job {{$labels.job_name}} status: {{$value}} (1=success, 0=running, -1=failed). User: {{$labels.user}}, Command: {{$labels.command}}, Node: {{$labels.node}}'
+        summary: Debugger Job Status Update
+      expr: debugger_job_status != 0
+      for: 0m
+      labels:
+        severity: new
+    
+    # Long Running Job Alert
+    - alert: DebuggerJobLongRunning
+      annotations:
+        description: Debugger job {{$labels.job_name}} by user {{$labels.user}} has been running for over 10 minutes with command {{$labels.command}} on node {{$labels.node}}
+        summary: Debugger Job Running Too Long
+      expr: debugger_job_duration_seconds > 600
+      for: 0m
+      labels:
+        severity: new
+    
+    # PCAP Generation Alert (for tcpdump jobs)
+    - alert: DebuggerPcapGenerated
+      annotations:
+        description: tcpdump job {{$labels.job_name}} by user {{$labels.user}} generated {{$value}} PCAP files on node {{$labels.node}}
+        summary: PCAP Files Generated
+      expr: debugger_pcap_files_generated_total > 0
+      for: 0m
+      labels:
+        severity: new
+    
+    # No PCAP Generated Alert (for tcpdump jobs that should have generated files)
+    - alert: DebuggerTcpdumpNoPcap
+      annotations:
+        description: tcpdump job {{$labels.job_name}} by user {{$labels.user}} completed but generated 0 PCAP files on node {{$labels.node}} - possible capture issue
+        summary: tcpdump Job Generated No PCAP Files
+      expr: debugger_pcap_files_generated_total == 0 and debugger_job_completed_total > 0
+      for: 0m
+      labels:
+        severity: new

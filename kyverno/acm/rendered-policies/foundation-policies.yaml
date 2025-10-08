@@ -1,0 +1,243 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-ensure-policies-namespace-policy
+  namespace: policies
+spec:
+  predicates:
+  - requiredClusterSelector:
+      labelSelector:
+        matchExpressions:
+        - key: environment
+          operator: In
+          values:
+          - prod
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-nsp-scc-policy
+  namespace: policies
+spec:
+  predicates:
+  - requiredClusterSelector:
+      labelSelector:
+        matchExpressions:
+        - key: environment
+          operator: In
+          values:
+          - prod
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: binding-ensure-policies-namespace-policy
+  namespace: policies
+placementRef:
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+  name: placement-ensure-policies-namespace-policy
+subjects:
+- apiGroup: policy.open-cluster-management.io
+  kind: Policy
+  name: ensure-policies-namespace-policy
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: binding-nsp-scc-policy
+  namespace: policies
+placementRef:
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+  name: placement-nsp-scc-policy
+subjects:
+- apiGroup: policy.open-cluster-management.io
+  kind: Policy
+  name: nsp-scc-policy
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  annotations:
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+  name: ensure-policies-namespace-policy
+  namespace: policies
+spec:
+  disabled: false
+  policy-templates:
+  - objectDefinition:
+      apiVersion: policy.open-cluster-management.io/v1
+      kind: ConfigurationPolicy
+      metadata:
+        name: ensure-policies-namespace-policy
+      spec:
+        object-templates:
+        - complianceType: musthave
+          objectDefinition:
+            apiVersion: kyverno.io/v1
+            kind: ClusterPolicy
+            metadata:
+              annotations:
+                policies.kyverno.io/category: Namespace Management
+                policies.kyverno.io/description: This policy ensures that the 'policies'
+                  namespace always exists on the cluster. It is used as a foundation
+                  for deploying all ACM policies.
+                policies.kyverno.io/severity: medium
+                policies.kyverno.io/subject: Namespace
+                policies.kyverno.io/title: Ensure Policies Namespace
+              name: ensure-policies-namespace
+            spec:
+              background: true
+              rules:
+              - generate:
+                  data:
+                    metadata:
+                      annotations:
+                        openshift.io/description: Namespace for ACM policies
+                        openshift.io/display-name: ACM Policies
+                      labels:
+                        managed-by: acm-policy
+                      name: policies
+                  kind: Namespace
+                  name: policies
+                  namespace: ""
+                  synchronize: true
+                match:
+                  any:
+                  - resources:
+                      kinds:
+                      - Namespace
+                name: ensure-policies-namespace-exists
+              validationFailureAction: Enforce
+        remediationAction: enforce
+        severity: low
+  - objectDefinition:
+      apiVersion: policy.open-cluster-management.io/v1
+      kind: ConfigurationPolicy
+      metadata:
+        name: inform-kyverno-ensure-policies-namespace
+      spec:
+        namespaceSelector:
+          exclude:
+          - kube-*
+          include:
+          - '*'
+        object-templates:
+        - complianceType: mustnothave
+          objectDefinition:
+            apiVersion: wgpolicyk8s.io/v1alpha2
+            kind: ClusterPolicyReport
+            results:
+            - policy: ensure-policies-namespace
+              result: fail
+        - complianceType: mustnothave
+          objectDefinition:
+            apiVersion: wgpolicyk8s.io/v1alpha2
+            kind: PolicyReport
+            results:
+            - policy: ensure-policies-namespace
+              result: fail
+        remediationAction: inform
+        severity: low
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  annotations:
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+  name: nsp-scc-policy
+  namespace: policies
+spec:
+  disabled: false
+  policy-templates:
+  - objectDefinition:
+      apiVersion: policy.open-cluster-management.io/v1
+      kind: ConfigurationPolicy
+      metadata:
+        name: nsp-scc-policy
+      spec:
+        object-templates:
+        - complianceType: musthave
+          objectDefinition:
+            apiVersion: kyverno.io/v1
+            kind: ClusterPolicy
+            metadata:
+              annotations:
+                policies.kyverno.io/category: Security, PSP
+                policies.kyverno.io/description: This policy restricts the use of
+                  specific SecurityContextConstraints (SCC) to only be allowed for
+                  specific deployments with specific container images. It helps prevent
+                  privilege escalation by ensuring only authorized workloads can use
+                  privileged SCCs.
+                policies.kyverno.io/severity: medium
+                policies.kyverno.io/subject: Pod
+                policies.kyverno.io/title: Restrict SCC by Deployment and Image
+              name: restrict-scc-by-deployment-and-image
+            spec:
+              background: true
+              rules:
+              - match:
+                  any:
+                  - resources:
+                      kinds:
+                      - Pod
+                name: validate-scc-annotations
+                preconditions:
+                  all:
+                  - key: '{{request.object.metadata.annotations."openshift.io/scc"}}'
+                    operator: Equals
+                    value: '{{request.object.metadata.annotations."openshift.io/scc"}}'
+                validate:
+                  deny:
+                    conditions:
+                      all:
+                      - key: '{{request.object.metadata.annotations."openshift.io/scc"}}'
+                        operator: Equals
+                        value: privileged
+                      - key: '{{ request.object.metadata.ownerReferences[0].name }}'
+                        operator: NotIn
+                        value:
+                        - splunk-universal-forwarder
+                        - debugger-job
+                      - key: '{{ images.contains(@, ''splunk/universalforwarder:*'')
+                          || images.contains(@, ''debugger:*'') }}'
+                        operator: Equals
+                        value: false
+                  message: The SCC '{{request.object.metadata.annotations."openshift.io/scc"}}'
+                    can only be used by authorized deployments and images.
+              validationFailureAction: Enforce
+        remediationAction: enforce
+        severity: low
+  - objectDefinition:
+      apiVersion: policy.open-cluster-management.io/v1
+      kind: ConfigurationPolicy
+      metadata:
+        name: inform-kyverno-restrict-scc-by-deployment-and-image
+      spec:
+        namespaceSelector:
+          exclude:
+          - kube-*
+          include:
+          - '*'
+        object-templates:
+        - complianceType: mustnothave
+          objectDefinition:
+            apiVersion: wgpolicyk8s.io/v1alpha2
+            kind: ClusterPolicyReport
+            results:
+            - policy: restrict-scc-by-deployment-and-image
+              result: fail
+        - complianceType: mustnothave
+          objectDefinition:
+            apiVersion: wgpolicyk8s.io/v1alpha2
+            kind: PolicyReport
+            results:
+            - policy: restrict-scc-by-deployment-and-image
+              result: fail
+        remediationAction: inform
+        severity: low

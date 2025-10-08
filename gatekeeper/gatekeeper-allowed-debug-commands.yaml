@@ -1,0 +1,184 @@
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sAllowedDebugCommands
+metadata:
+  name: only-execute-command-sh-debug
+spec:
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: [Pod]
+      - apiGroups: ["batch"]
+        kinds: [Job]
+    namespaces:
+      - debugger
+  parameters:
+    allowedCommand: "/opt/scripts/execute-command.sh"
+    allowedCommands:
+      # Read-only network debugging tools
+      - "tcpdump"    # packet capture with read-only flags only
+      - "ping"
+      - "traceroute"
+      - "dig"
+      - "nslookup"
+      - "ss"
+      - "netstat"
+      - "telnet"
+      # Read-only system information tools
+      - "ps"
+      - "top"
+      - "htop"
+      - "lsof"
+      - "free"
+      - "df"
+      - "du"
+      - "lscpu"
+      - "lsmem"
+      - "lsblk"
+      - "lspci"
+      - "lsusb"
+      - "dmesg"
+      - "cat"
+      - "less"
+      - "head"
+      - "tail"
+      - "grep"
+      - "awk"
+      - "sed"
+      - "sort"
+      - "uniq"
+      - "wc"
+      - "find"
+      - "ls"
+      - "pwd"
+      - "whoami"
+      - "id"
+      - "uname"
+      - "uptime"
+      - "date"
+    allowedFlags:
+      # tcpdump flags (read-only, no file writing)
+      - "-c"      # packet count
+      - "-i"      # interface
+      - "-n"      # don't resolve addresses
+      - "-nn"     # don't resolve addresses or ports
+      - "-v"      # verbose
+      - "-vv"     # more verbose
+      - "-vvv"    # most verbose
+      - "-s"      # snapshot length
+      - "-A"      # print ASCII
+      - "-X"      # print hex and ASCII
+      - "-t"      # don't print timestamp
+      - "-tt"     # print unformatted timestamp
+      - "-ttt"    # print delta timestamp
+      - "-tttt"   # print timestamp with date
+      - "-S"      # print absolute sequence numbers
+      - "-e"      # print link-level header
+      - "-q"      # quiet output
+      - "-x"      # print hex
+      - "-xx"     # print hex with link level
+      - "-p"      # don't put interface in promiscuous mode
+      - "-U"      # packet-buffered output
+      - "-B"      # buffer size
+      # NOTE: -w (write to file) is intentionally excluded for read-only policy
+      # NOTE: -r (read from file) is excluded as we don't allow file reads from user paths
+      # ping flags (read-only)
+      - "-c"      # count
+      - "-i"      # interval
+      - "-t"      # TTL
+      - "-s"      # packet size
+      - "-W"      # timeout
+      - "-w"      # deadline
+      - "-q"      # quiet
+      - "-v"      # verbose
+      - "-4"      # IPv4
+      - "-6"      # IPv6
+      # dig/nslookup flags (read-only)
+      - "+short"
+      - "+trace"
+      - "+tcp"
+      - "+udp"
+      - "@"       # DNS server
+      - "-x"      # reverse lookup
+      - "-t"      # query type
+      # ss/netstat flags (read-only)
+      - "-t"      # TCP
+      - "-u"      # UDP
+      - "-l"      # listening
+      - "-p"      # process
+      - "-n"      # numeric
+      - "-a"      # all
+      - "-r"      # route table
+      - "-i"      # interfaces
+      - "-s"      # statistics
+      - "-4"      # IPv4
+      - "-6"      # IPv6
+      # ps flags (read-only)
+      - "aux"
+      - "ef"
+      - "-e"
+      - "-f"
+      - "-u"      # user
+      - "-p"      # PID
+      - "-o"      # output format
+      - "--forest"
+      # General read-only flags
+      - "-a"      # all
+      - "-l"      # long format / list
+      - "-h"      # human readable / help
+      - "--help"  # help
+      - "-V"      # version
+      - "--version" # version
+      - "-n"      # numeric/count/lines
+      - "-r"      # recursive/reverse
+      - "-d"      # directory
+      - "-f"      # follow (for tail)
+      - "-v"      # verbose/version
+      - "-q"      # quiet
+      - "-s"      # size/silent
+      - "-m"      # human readable (free)
+      - "-g"      # gigabytes
+      - "-k"      # kilobytes
+      - "-b"      # bytes
+      - "--si"    # SI units
+    allowedInterfaces:
+      - "any"
+      - "eth0"
+      - "eth1"
+      - "lo"
+      - "docker0"
+      - "br-"     # bridge interfaces (prefix) - read-only reference
+      - "veth"    # veth interfaces (prefix) - read-only reference
+      - "tun"     # tunnel interfaces (prefix) - read-only reference
+      - "tap"     # tap interfaces (prefix) - read-only reference
+    allowedPorts:
+      - "22"      # SSH
+      - "53"      # DNS
+      - "80"      # HTTP
+      - "443"     # HTTPS
+      - "8080"    # HTTP-alt
+      - "8443"    # HTTPS-alt
+      - "3000"    # Development
+      - "5000"    # Development
+      - "6443"    # Kubernetes API
+      - "2379"    # etcd
+      - "2380"    # etcd
+      - "10250"   # kubelet
+      - "10251"   # kube-scheduler
+      - "10252"   # kube-controller-manager
+      - "1-65535" # Allow port range for read-only connectivity testing
+    allowedFilePaths:
+      # Read-only file paths - no write operations allowed
+      - "/proc/"             # proc filesystem (read-only)
+      - "/sys/"              # sys filesystem (read-only)
+      - "/var/log/"          # log files (read-only)
+      - "/host/var/log/"     # host log files (read-only)
+      - "/etc/"              # configuration files (read-only)
+      - "/host/etc/"         # host config files (read-only)
+    # Regex patterns for flexible validation (read-only operations only)
+    regexPatterns:
+      numericValues: "^[0-9]+$"                    # Any numeric value
+      portRange: "^([1-9][0-9]{0,4}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$"  # 1-65535
+      ipAddress: "^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$"
+      interface: "^(eth|lo|docker|br-|veth|tun|tap)[0-9a-zA-Z]*$"
+      readOnlyFilePath: "^(/host)?/(proc|sys|var/log|etc)/[a-zA-Z0-9._/-]*$"  # Only read-only paths
+      hostnameOrDomain: "^[a-zA-Z0-9]([a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?(\\.([a-zA-Z0-9]([a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?))*$"

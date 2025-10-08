@@ -1,0 +1,14 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: policy-generator-example
+policyDefaults:
+  namespace: default
+  placement:
+    labelSelector:
+      rhdp_usage: development
+  remediationAction: inform
+policies:
+  - name: nsp-scc-policy
+    manifests:
+      - path: policy.yaml
